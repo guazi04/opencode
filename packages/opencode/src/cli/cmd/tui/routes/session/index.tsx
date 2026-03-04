@@ -1624,11 +1624,14 @@ function InlineTool(props: {
   spinner?: boolean
   children: JSX.Element
   part: ToolPart
+  onClick?: () => void
 }) {
   const [margin, setMargin] = createSignal(0)
   const { theme } = useTheme()
   const ctx = use()
   const sync = useSync()
+  const renderer = useRenderer()
+  const [hover, setHover] = createSignal(false)
 
   const permission = createMemo(() => {
     const callID = sync.data.permission[ctx.sessionID]?.at(0)?.tool?.callID
@@ -1655,6 +1658,12 @@ function InlineTool(props: {
     <box
       marginTop={margin()}
       paddingLeft={3}
+      onMouseOver={() => props.onClick && setHover(true)}
+      onMouseOut={() => setHover(false)}
+      onMouseUp={() => {
+        if (renderer.getSelection()?.getSelectedText()) return
+        props.onClick?.()
+      }}
       renderBefore={function () {
         const el = this as BoxRenderable
         const parent = el.parent
@@ -1680,10 +1689,10 @@ function InlineTool(props: {
     >
       <Switch>
         <Match when={props.spinner}>
-          <Spinner color={fg()} children={props.children} />
+          <Spinner color={hover() ? theme.text : fg()} children={props.children} />
         </Match>
         <Match when={true}>
-          <text paddingLeft={3} fg={fg()} attributes={denied() ? TextAttributes.STRIKETHROUGH : undefined}>
+          <text paddingLeft={3} fg={hover() ? theme.text : fg()} attributes={denied() ? TextAttributes.STRIKETHROUGH : undefined}>
             <Show fallback={<>~ {props.pending}</>} when={props.complete}>
               <span style={{ fg: props.iconColor }}>{props.icon}</span> {props.children}
             </Show>
@@ -1989,35 +1998,19 @@ function Task(props: ToolProps<typeof TaskTool>) {
     return content.join("\n")
   })
 
-  const lines = createMemo(() => content().split("\n"))
-  const body = createMemo(() => lines().slice(1).join("\n"))
+  const sid = props.metadata.sessionId
 
   return (
-    <Switch>
-      <Match when={props.metadata.sessionId}>
-        <BlockTool
-          title={lines()[0]}
-          part={props.part}
-          spinner={isRunning()}
-          onClick={() => navigate({ type: "session", sessionID: props.metadata.sessionId! })}
-        >
-          <Show when={body()}>
-            <text fg={theme.textMuted}>{body()}</text>
-          </Show>
-        </BlockTool>
-      </Match>
-      <Match when={true}>
-        <InlineTool
-          icon="│"
-          spinner={isRunning()}
-          complete={props.input.description}
-          pending="Delegating..."
-          part={props.part}
-        >
-          {content()}
-        </InlineTool>
-      </Match>
-    </Switch>
+    <InlineTool
+      icon="│"
+      spinner={isRunning()}
+      complete={props.input.description}
+      pending="Delegating..."
+      part={props.part}
+      onClick={sid ? () => navigate({ type: "session", sessionID: sid }) : undefined}
+    >
+      {content()}
+    </InlineTool>
   )
 }
 
