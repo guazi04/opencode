@@ -35,6 +35,10 @@ export namespace SessionProcessor {
     let blocked = false
     let attempt = 0
     let needsCompaction = false
+    const deltas: Record<string, { text: string; bytes: number; path: string | undefined; last: number }> = {}
+    const PATH_RE = /"filePath"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/
+    const THROTTLE_MS = 500
+    const THROTTLE_BYTES = 16384
 
     const result = {
       get message() {
@@ -126,10 +130,41 @@ export namespace SessionProcessor {
                   toolcalls[value.id] = part as MessageV2.ToolPart
                   break
 
-                case "tool-input-delta":
+                case "tool-input-delta": {
+                  const match = toolcalls[value.id]
+                  if (!match || match.state.status !== "pending") break
+                  const acc = deltas[value.id] ?? (deltas[value.id] = { text: "", bytes: 0, path: undefined, last: 0 })
+                  if (!acc.path && acc.text.length < 8192) acc.text += value.delta
+                  acc.bytes += Buffer.byteLength(value.delta, "utf8")
+                  if (!acc.path) {
+                    const m = PATH_RE.exec(acc.text)
+                    if (m) {
+                      try { acc.path = JSON.parse('"' + m[1] + '"') } catch { acc.path = m[1] }
+                      acc.text = ""
+                    }
+                  }
+                  const now = Date.now()
+                  const found = acc.path && !match.state.input.filePath
+                  const elapsed = now - acc.last >= THROTTLE_MS
+                  const grown = acc.bytes - (match.state.received ?? 0) >= THROTTLE_BYTES
+                  if (found || elapsed || grown) {
+                    acc.last = now
+                    const updated = await Session.updatePart({
+                      ...match,
+                      state: {
+                        status: "pending",
+                        input: acc.path ? { ...match.state.input, filePath: acc.path } : match.state.input,
+                        raw: match.state.raw,
+                        received: acc.bytes,
+                      },
+                    })
+                    toolcalls[value.id] = updated as MessageV2.ToolPart
+                  }
                   break
+                }
 
                 case "tool-input-end":
+                  delete deltas[value.id]
                   break
 
                 case "tool-call": {
@@ -176,6 +211,7 @@ export namespace SessionProcessor {
                       })
                     }
                   }
+                  delete deltas[value.toolCallId]
                   break
                 }
                 case "tool-result": {
