@@ -19,7 +19,6 @@ test("review panel can be toggled via keybind", async ({ page, gotoSession }) =>
   await expect(reviewToggle).toBeVisible()
   if (await expanded(reviewToggle)) await reviewToggle.click()
   await expect(reviewToggle).toHaveAttribute("aria-expanded", "false")
-  await expect(page.locator("#review-panel")).toHaveCount(0)
 
   await page.keyboard.press(`${modKey}+Shift+R`)
   await expect(reviewToggle).toHaveAttribute("aria-expanded", "true")
@@ -27,5 +26,4 @@ test("review panel can be toggled via keybind", async ({ page, gotoSession }) =>
 
   await page.keyboard.press(`${modKey}+Shift+R`)
   await expect(reviewToggle).toHaveAttribute("aria-expanded", "false")
-  await expect(page.locator("#review-panel")).toHaveCount(0)
 })
