@@ -181,12 +181,12 @@ export const SessionArchiveCommand = cmd({
   handler: async (args) => {
     await bootstrap(process.cwd(), async () => {
       try {
-        await Session.get(args.sessionID)
+        await Session.get(SessionID.make(args.sessionID))
       } catch {
         UI.error(`Session not found: ${args.sessionID}`)
         process.exit(1)
       }
-      await Session.setArchived({ sessionID: args.sessionID, time: Date.now() })
+      await Session.setArchived({ sessionID: SessionID.make(args.sessionID), time: Date.now() })
       UI.println(UI.Style.TEXT_SUCCESS_BOLD + `Session ${args.sessionID} archived` + UI.Style.TEXT_NORMAL)
     })
   },
@@ -205,12 +205,12 @@ export const SessionUnarchiveCommand = cmd({
   handler: async (args) => {
     await bootstrap(process.cwd(), async () => {
       try {
-        await Session.get(args.sessionID)
+        await Session.get(SessionID.make(args.sessionID))
       } catch {
         UI.error(`Session not found: ${args.sessionID}`)
         process.exit(1)
       }
-      await Session.setArchived({ sessionID: args.sessionID, time: undefined })
+      await Session.setArchived({ sessionID: SessionID.make(args.sessionID), time: undefined })
       UI.println(UI.Style.TEXT_SUCCESS_BOLD + `Session ${args.sessionID} unarchived` + UI.Style.TEXT_NORMAL)
     })
   },
@@ -294,7 +294,7 @@ export const SessionPruneCommand = cmd({
     await bootstrap(process.cwd(), async () => {
       const cutoff = Date.now() - args.olderThan * 86_400_000
       const BATCH = 100
-      const candidates: { id: string; title: string; archived: boolean; parent: boolean }[] = []
+      const candidates: { id: SessionID; title: string; archived: boolean; parent: boolean }[] = []
 
       // paginate through all prunable sessions in batches
       let offset = 0
@@ -379,7 +379,7 @@ export const SessionPruneCommand = cmd({
   },
 })
 
-function collectDescendants(id: string): string[] {
+function collectDescendants(id: SessionID): SessionID[] {
   const rows = Database.use((db) =>
     db
       .select({ id: SessionTable.id })
@@ -387,7 +387,7 @@ function collectDescendants(id: string): string[] {
       .where(eq(SessionTable.parent_id, id))
       .all(),
   )
-  const result: string[] = []
+  const result: SessionID[] = []
   for (const row of rows) {
     result.push(row.id)
     result.push(...collectDescendants(row.id))
