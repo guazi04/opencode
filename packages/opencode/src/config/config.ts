@@ -37,6 +37,7 @@ import { Account } from "@/account"
 import { ConfigPaths } from "./paths"
 import { Filesystem } from "@/util/filesystem"
 import { Process } from "@/util/process"
+import { Lock } from "@/util/lock"
 
 export namespace Config {
   const ModelId = z.string().meta({ $ref: "https://models.dev/model-schema.json#/$defs/Model" })
@@ -289,6 +290,7 @@ export namespace Config {
 
     // Install any additional dependencies defined in the package.json
     // This allows local plugins and custom tools to use external packages
+    using _ = await Lock.write("bun-install")
     await BunProc.run(
       [
         "install",
@@ -1063,12 +1065,19 @@ export namespace Config {
               "Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.",
             ),
           chunkTimeout: z
-            .number()
-            .int()
-            .positive()
+            .union([
+              z
+                .number()
+                .int()
+                .positive()
+                .describe(
+                  "Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted. Set to false to disable chunk timeout.",
+                ),
+              z.literal(false).describe("Disable chunk timeout for this provider entirely."),
+            ])
             .optional()
             .describe(
-              "Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted.",
+              "Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted. Set to false to disable chunk timeout.",
             ),
         })
         .catchall(z.any())

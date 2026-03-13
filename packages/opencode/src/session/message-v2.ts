@@ -2,7 +2,14 @@ import { BusEvent } from "@/bus/bus-event"
 import { SessionID, MessageID, PartID } from "./schema"
 import z from "zod"
 import { NamedError } from "@opencode-ai/util/error"
-import { APICallError, convertToModelMessages, LoadAPIKeyError, type ModelMessage, type UIMessage } from "ai"
+import {
+  APICallError,
+  convertToModelMessages,
+  LoadAPIKeyError,
+  TypeValidationError,
+  type ModelMessage,
+  type UIMessage,
+} from "ai"
 import { LSP } from "../lsp"
 import { Snapshot } from "@/snapshot"
 import { fn } from "@/util/fn"
@@ -956,6 +963,30 @@ export namespace MessageV2 {
           },
           { cause: e },
         ).toObject()
+      case TypeValidationError.isInstance(e): {
+        const body = (() => {
+          if (typeof e.value === "string") return e.value
+          try {
+            return JSON.stringify(e.value) ?? String(e.value)
+          } catch {
+            return String(e.value)
+          }
+        })()
+        const transient =
+          /InternalServerException|ServiceUnavailableException|ThrottlingException|TooManyRequestsException|BadGatewayException|Bad Gateway|Too Many Requests|\b(429|500|502|503|504)\b/i.test(
+            body,
+          )
+        if (transient)
+          return new MessageV2.APIError(
+            {
+              message: body.slice(0, 500),
+              isRetryable: true,
+              responseBody: body,
+            },
+            { cause: e },
+          ).toObject()
+        return new NamedError.Unknown({ message: e.message }, { cause: e }).toObject()
+      }
       case e instanceof Error:
         return new NamedError.Unknown({ message: e.toString() }, { cause: e }).toObject()
       default:
