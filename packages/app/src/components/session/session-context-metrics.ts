@@ -38,6 +38,10 @@ const tokenTotal = (msg: AssistantMessage) => {
   return msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
 }
 
+const inputTotal = (msg: AssistantMessage) => {
+  return msg.tokens.input + msg.tokens.cache.read + msg.tokens.cache.write
+}
+
 const lastAssistantWithTokens = (messages: Message[]) => {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
@@ -66,7 +70,7 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Metrics =>
       providerLabel: provider?.name ?? message.providerID,
       modelLabel: model?.name ?? message.modelID,
       limit,
-      input: message.tokens.input,
+      input: inputTotal(message),
       output: message.tokens.output,
       reasoning: message.tokens.reasoning,
       cacheRead: message.tokens.cache.read,

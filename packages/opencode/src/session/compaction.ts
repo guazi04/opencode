@@ -274,6 +274,10 @@ When constructing the summary, try to stick to this template:
           time: { created: Date.now() },
           agent: userMessage.agent,
           model: userMessage.model,
+          format: userMessage.format,
+          tools: userMessage.tools,
+          system: userMessage.system,
+          variant: userMessage.variant,
         })
         const text =
           (input.overflow

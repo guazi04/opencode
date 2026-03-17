@@ -963,6 +963,7 @@ export namespace SessionPrompt {
 
   async function createUserMessage(input: PromptInput) {
     const agent = await Agent.get(input.agent ?? (await Agent.defaultAgent()))
+    const system = input.system ?? agent.prompt
 
     const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
     const full =
@@ -981,7 +982,7 @@ export namespace SessionPrompt {
       tools: input.tools,
       agent: agent.name,
       model,
-      system: input.system,
+      system,
       format: input.format,
       variant,
     }
@@ -1936,7 +1937,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
     const result = await LLM.stream({
       agent,
-      user: firstRealUser.info as MessageV2.User,
+      user: {
+        ...(firstRealUser.info as MessageV2.User),
+        system: undefined,
+      },
       system: [],
       small: true,
       tools: {},

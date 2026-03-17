@@ -61,6 +61,7 @@ describe("getSessionContextMetrics", () => {
 
     expect(metrics.totalCost).toBe(1.75)
     expect(metrics.context?.message.id).toBe("a2")
+    expect(metrics.context?.input).toBe(350)
     expect(metrics.context?.total).toBe(500)
     expect(metrics.context?.usage).toBe(50)
     expect(metrics.context?.providerLabel).toBe("OpenAI")

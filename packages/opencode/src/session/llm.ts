@@ -64,6 +64,8 @@ export namespace LLM {
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
 
+    const user = input.user.system
+    const custom = user && user !== input.agent.prompt && !input.system.includes(user) ? [user] : []
     const system = []
     system.push(
       [
@@ -73,7 +75,7 @@ export namespace LLM {
         // any custom prompt passed into this call
         ...input.system,
         // any custom prompt from last user message
-        ...(input.user.system ? [input.user.system] : []),
+        ...custom,
       ]
         .filter((x) => x)
         .join("\n"),

@@ -1,5 +1,5 @@
 import path from "path"
-import { describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { fileURLToPath } from "url"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -10,6 +10,105 @@ import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 
 Log.init({ print: false })
+
+type Req = {
+  url: URL
+  body: Record<string, unknown>
+}
+
+const state = {
+  server: null as ReturnType<typeof Bun.serve> | null,
+  req: [] as Req[],
+}
+
+function stream(text: string) {
+  const payload =
+    [
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: { role: "assistant" } }],
+      })}`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: { content: text } }],
+      })}`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: {}, finish_reason: "stop" }],
+      })}`,
+      "data: [DONE]",
+    ].join("\n\n") + "\n\n"
+  const encoder = new TextEncoder()
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(payload))
+      controller.close()
+    },
+  })
+}
+
+function hasTitlePrompt(msg: { role?: unknown; content?: unknown }) {
+  if (msg.role !== "user") return false
+  if (typeof msg.content === "string") {
+    return msg.content.includes("Generate a title for this conversation")
+  }
+  if (!Array.isArray(msg.content)) return false
+  return msg.content.some(
+    (part) =>
+      typeof part === "object" &&
+      part !== null &&
+      "type" in part &&
+      "text" in part &&
+      part.type === "text" &&
+      typeof part.text === "string" &&
+      part.text.includes("Generate a title for this conversation"),
+  )
+}
+
+function systemText(rows: Array<{ role?: unknown; content?: unknown }>) {
+  return rows
+    .filter((x) => x.role === "system")
+    .map((x) => (typeof x.content === "string" ? x.content : JSON.stringify(x.content)))
+    .join("\n")
+}
+
+async function wait(count: number, timeout = 5000) {
+  const end = Date.now() + timeout
+  while (Date.now() < end) {
+    if (state.req.length >= count) return
+    await Bun.sleep(25)
+  }
+  throw new Error(`timed out waiting for ${count} requests, got ${state.req.length}`)
+}
+
+beforeAll(() => {
+  state.server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url)
+      if (!url.pathname.endsWith("/chat/completions")) {
+        return new Response("not found", { status: 404 })
+      }
+      const body = (await req.json()) as Record<string, unknown>
+      state.req.push({ url, body })
+      return new Response(stream("ok"), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    },
+  })
+})
+
+beforeEach(() => {
+  state.req.length = 0
+})
+
+afterAll(() => {
+  state.server?.stop()
+})
 
 describe("session.prompt missing file", () => {
   test("does not fail the prompt when a file part is missing", async () => {
@@ -208,5 +307,135 @@ describe("session.prompt agent variant", () => {
       if (prev === undefined) delete process.env.OPENAI_API_KEY
       else process.env.OPENAI_API_KEY = prev
     }
+  })
+})
+
+describe("session.prompt system persistence", () => {
+  test("stores agent prompt as fallback system for main session messages", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        agent: {
+          build: {
+            model: "openai/gpt-5.2",
+            prompt: "Main session system prompt",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const msg = await SessionPrompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          parts: [{ type: "text", text: "hello" }],
+        })
+
+        if (msg.info.role !== "user") throw new Error("expected user message")
+        expect(msg.info.system).toBe("Main session system prompt")
+
+        const stored = await MessageV2.get({
+          sessionID: session.id,
+          messageID: msg.info.id,
+        })
+        if (stored.info.role !== "user") throw new Error("expected user message")
+        expect(stored.info.system).toBe("Main session system prompt")
+
+        await Session.remove(session.id)
+      },
+    })
+  })
+
+  test("preserves explicit system when caller provides one", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        agent: {
+          build: {
+            model: "openai/gpt-5.2",
+            prompt: "Main session system prompt",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const msg = await SessionPrompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          system: "Explicit caller system",
+          parts: [{ type: "text", text: "hello" }],
+        })
+
+        if (msg.info.role !== "user") throw new Error("expected user message")
+        expect(msg.info.system).toBe("Explicit caller system")
+
+        await Session.remove(session.id)
+      },
+    })
+  })
+})
+
+describe("session.prompt title isolation", () => {
+  test("does not leak main system into title request", async () => {
+    const srv = state.server
+    if (!srv) throw new Error("server not initialized")
+
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        enabled_providers: ["alibaba"],
+        provider: {
+          alibaba: {
+            options: {
+              apiKey: "test-key",
+              baseURL: `${srv.url.origin}/v1`,
+            },
+          },
+        },
+        agent: {
+          build: {
+            model: "alibaba/qwen-plus",
+            prompt: "Main session system prompt",
+          },
+          title: {
+            model: "alibaba/qwen-plus",
+            prompt: "Title agent system prompt",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        await SessionPrompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          parts: [{ type: "text", text: "hello" }],
+        })
+
+        await wait(2)
+        const req = state.req.map((x) => x.body)
+        const rows = req
+          .map((x) => (x.messages ?? []) as Array<{ role?: unknown; content?: unknown }>)
+          .find((x) => x.some(hasTitlePrompt))
+
+        if (!rows) throw new Error("expected title request")
+
+        const text = systemText(rows)
+        expect(text).toContain("Title agent system prompt")
+        expect(text).not.toContain("Main session system prompt")
+      },
+    })
   })
 })
