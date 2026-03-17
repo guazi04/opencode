@@ -281,9 +281,6 @@ const WorkspaceSessionList = (props: {
   const list = (session: Session) => props.children().get(session.parentID ?? "") ?? props.sessions()
   const kids = (session: Session) => props.children().get(session.id) ?? []
   const node = (session: Session): JSX.Element => {
-    const child = kids(session)
-    const has = child.length > 0
-    const open = !!tree.open[session.id]
     return (
       <div class="w-full">
         <SessionItem
@@ -294,8 +291,8 @@ const WorkspaceSessionList = (props: {
           mobile={props.mobile}
           popover={props.popover}
           child={!!session.parentID}
-          hasChild={has}
-          openChild={open}
+          hasChild={kids(session).length > 0}
+          openChild={!!tree.open[session.id]}
           onChildToggle={() => setTree("open", session.id, (state) => !state)}
           sidebarExpanded={props.ctx.sidebarExpanded}
           sidebarHovering={props.ctx.sidebarHovering}
@@ -306,11 +303,11 @@ const WorkspaceSessionList = (props: {
           prefetchSession={props.ctx.prefetchSession}
           archiveSession={props.ctx.archiveSession}
         />
-        <Show when={has && open}>
+        <Show when={kids(session).length > 0 && !!tree.open[session.id]}>
           <div class="relative ml-5 pl-2">
             <div class="absolute left-0 top-0 bottom-2 w-px bg-border-weak-base pointer-events-none" />
             <div class="flex flex-col gap-1">
-              <For each={child}>
+              <For each={kids(session)}>
                 {(item) => (
                   <div class="relative">
                     <div class="absolute -left-2 top-4 w-2 h-px bg-border-weak-base pointer-events-none" />

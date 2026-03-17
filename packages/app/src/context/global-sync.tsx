@@ -30,7 +30,7 @@ import { createChildStoreManager } from "./global-sync/child-store"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./global-sync/event-reducer"
 import { createRefreshQueue } from "./global-sync/queue"
 import { clearSessionPrefetchDirectory } from "./global-sync/session-prefetch"
-import { estimateRootSessionTotal, loadRootSessionsWithFallback } from "./global-sync/session-load"
+import { estimateRootSessionTotal, loadChildSessions, loadRootSessionsWithFallback } from "./global-sync/session-load"
 import { trimSessions } from "./global-sync/session-trim"
 import type { ProjectMeta } from "./global-sync/types"
 import { SESSION_RECENT_LIMIT } from "./global-sync/types"
@@ -226,6 +226,32 @@ function createGlobalSync() {
         setStore("session", reconcile(sessions, { key: "id" }))
         cleanupDroppedSessionCaches(store, setStore, sessions, setSessionTodo)
         sessionMeta.set(directory, { limit })
+        const roots = sessions.filter((s) => !s.parentID)
+
+        children.pin(directory)
+        void loadChildSessions({
+          directory,
+          roots,
+          child: (query) => globalSDK.client.session.children(query),
+        })
+          .then((loaded) => {
+            if (loaded.length === 0) return
+            const list = [
+              ...new Map([...loaded, ...store.session].filter((s) => !!s?.id).map((s) => [s.id, s])).values(),
+            ]
+            const sessions = trimSessions(list, {
+              limit: store.limit,
+              permission: store.permission,
+            })
+            setStore("session", reconcile(sessions, { key: "id" }))
+            cleanupDroppedSessionCaches(store, setStore, sessions, setSessionTodo)
+          })
+          .catch((err) => {
+            console.error("Failed to load child sessions", err)
+          })
+          .finally(() => {
+            children.unpin(directory)
+          })
       })
       .catch((err) => {
         console.error("Failed to load sessions", err)
