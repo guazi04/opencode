@@ -1227,10 +1227,10 @@ export type ProviderConfig = {
      */
     timeout?: number | false
     /**
-     * Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted.
+     * Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted. Set to false to disable chunk timeout.
      */
-    chunkTimeout?: number
-    [key: string]: unknown | string | boolean | number | false | number | undefined
+    chunkTimeout?: number | false
+    [key: string]: unknown | string | boolean | number | false | number | false | undefined
   }
 }
 
@@ -1477,6 +1477,10 @@ export type Config = {
      * Enable pruning of old tool outputs (default: true)
      */
     prune?: boolean
+    /**
+     * Clear old tool outputs from storage after compaction (default: true)
+     */
+    reclaim?: boolean
     /**
      * Token buffer for compaction. Leaves enough window to avoid overflow during compaction.
      */
