@@ -244,34 +244,59 @@ const WorkspaceSessionList = (props: {
   showNew: Accessor<boolean>
   loading: Accessor<boolean>
   sessions: Accessor<Session[]>
-  children: Accessor<Map<string, string[]>>
+  children: Accessor<Map<string, Session[]>>
   hasMore: Accessor<boolean>
   loadMore: () => Promise<void>
   language: ReturnType<typeof useLanguage>
-}): JSX.Element => (
-  <nav class="flex flex-col gap-1">
-    <Show when={props.showNew()}>
-      <NewSessionItem
-        slug={props.slug()}
-        mobile={props.mobile}
-        sidebarExpanded={props.ctx.sidebarExpanded}
-        clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
-        setHoverSession={props.ctx.setHoverSession}
-      />
-    </Show>
-    <Show when={props.loading()}>
-      <SessionSkeleton />
-    </Show>
-    <For each={props.sessions()}>
-      {(session) => (
+}): JSX.Element => {
+  const params = useParams()
+  const [tree, setTree] = createStore({
+    open: {} as Record<string, boolean>,
+  })
+
+  const parent = createMemo(() => {
+    const map = new Map<string, string>()
+    for (const [id, list] of props.children()) {
+      for (const session of list) {
+        map.set(session.id, id)
+      }
+    }
+    return map
+  })
+
+  createEffect(() => {
+    const id = params.id
+    if (!id) return
+    const seen = new Set<string>()
+    let next = id
+    while (true) {
+      const item = parent().get(next)
+      if (!item || seen.has(item)) return
+      seen.add(item)
+      setTree("open", item, true)
+      next = item
+    }
+  })
+
+  const list = (session: Session) => props.children().get(session.parentID ?? "") ?? props.sessions()
+  const kids = (session: Session) => props.children().get(session.id) ?? []
+  const node = (session: Session): JSX.Element => {
+    const child = kids(session)
+    const has = child.length > 0
+    const open = !!tree.open[session.id]
+    return (
+      <div class="w-full">
         <SessionItem
           session={session}
-          list={props.sessions()}
+          list={list(session)}
           navList={props.ctx.navList}
           slug={props.slug()}
           mobile={props.mobile}
           popover={props.popover}
-          children={props.children()}
+          child={!!session.parentID}
+          hasChild={has}
+          openChild={open}
+          onChildToggle={() => setTree("open", session.id, (state) => !state)}
           sidebarExpanded={props.ctx.sidebarExpanded}
           sidebarHovering={props.ctx.sidebarHovering}
           nav={props.ctx.nav}
@@ -281,25 +306,58 @@ const WorkspaceSessionList = (props: {
           prefetchSession={props.ctx.prefetchSession}
           archiveSession={props.ctx.archiveSession}
         />
-      )}
-    </For>
-    <Show when={props.hasMore()}>
-      <div class="relative w-full py-1">
-        <Button
-          variant="ghost"
-          class="flex w-full text-left justify-start text-14-regular text-text-weak pl-9 pr-10"
-          size="large"
-          onClick={(e: MouseEvent) => {
-            props.loadMore()
-            ;(e.currentTarget as HTMLButtonElement).blur()
-          }}
-        >
-          {props.language.t("common.loadMore")}
-        </Button>
+        <Show when={has && open}>
+          <div class="relative ml-5 pl-2">
+            <div class="absolute left-0 top-0 bottom-2 w-px bg-border-weak-base pointer-events-none" />
+            <div class="flex flex-col gap-1">
+              <For each={child}>
+                {(item) => (
+                  <div class="relative">
+                    <div class="absolute -left-2 top-4 w-2 h-px bg-border-weak-base pointer-events-none" />
+                    {node(item)}
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
       </div>
-    </Show>
-  </nav>
-)
+    )
+  }
+
+  return (
+    <nav class="flex flex-col gap-1">
+      <Show when={props.showNew()}>
+        <NewSessionItem
+          slug={props.slug()}
+          mobile={props.mobile}
+          sidebarExpanded={props.ctx.sidebarExpanded}
+          clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
+          setHoverSession={props.ctx.setHoverSession}
+        />
+      </Show>
+      <Show when={props.loading()}>
+        <SessionSkeleton />
+      </Show>
+      <For each={props.sessions()}>{(session) => node(session)}</For>
+      <Show when={props.hasMore()}>
+        <div class="relative w-full py-1">
+          <Button
+            variant="ghost"
+            class="flex w-full text-left justify-start text-14-regular text-text-weak pl-9 pr-10"
+            size="large"
+            onClick={(e: MouseEvent) => {
+              props.loadMore()
+              ;(e.currentTarget as HTMLButtonElement).blur()
+            }}
+          >
+            {props.language.t("common.loadMore")}
+          </Button>
+        </div>
+      </Show>
+    </nav>
+  )
+}
 
 export const SortableWorkspace = (props: {
   ctx: WorkspaceSidebarContext
@@ -321,7 +379,7 @@ export const SortableWorkspace = (props: {
   })
   const slug = createMemo(() => base64Encode(props.directory))
   const sessions = createMemo(() => sortedRootSessions(workspaceStore, props.sortNow()))
-  const children = createMemo(() => childMapByParent(workspaceStore.session))
+  const children = createMemo(() => childMapByParent(workspaceStore.session, props.sortNow()))
   const local = createMemo(() => props.directory === props.project.worktree)
   const active = createMemo(() => props.ctx.currentDir() === props.directory)
   const workspaceValue = createMemo(() => {
@@ -470,7 +528,7 @@ export const LocalWorkspace = (props: {
   })
   const slug = createMemo(() => base64Encode(props.project.worktree))
   const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
-  const children = createMemo(() => childMapByParent(workspace().store.session))
+  const children = createMemo(() => childMapByParent(workspace().store.session, props.sortNow()))
   const booted = createMemo((prev) => prev || workspace().store.status === "complete", false)
   const loading = createMemo(() => !booted() && sessions().length === 0)
   const hasMore = createMemo(() => workspace().store.sessionTotal > sessions().length)

@@ -73,7 +73,10 @@ export type SessionItemProps = {
   mobile?: boolean
   dense?: boolean
   popover?: boolean
-  children: Map<string, string[]>
+  child?: boolean
+  hasChild?: boolean
+  openChild?: boolean
+  onChildToggle?: () => void
   sidebarExpanded: Accessor<boolean>
   sidebarHovering: Accessor<boolean>
   nav: Accessor<HTMLElement | undefined>
@@ -89,6 +92,12 @@ const SessionRow = (props: {
   slug: string
   mobile?: boolean
   dense?: boolean
+  child: Accessor<boolean>
+  agent: Accessor<string>
+  state: Accessor<string>
+  hasChild: Accessor<boolean>
+  openChild: Accessor<boolean>
+  onChildToggle: () => void
   tint: Accessor<string | undefined>
   isWorking: Accessor<boolean>
   hasPermissions: Accessor<boolean>
@@ -102,44 +111,73 @@ const SessionRow = (props: {
   warmFocus: () => void
   cancelHoverPrefetch: () => void
 }): JSX.Element => (
-  <A
-    href={`/${props.slug}/session/${props.session.id}`}
-    class={`flex items-center justify-between gap-3 min-w-0 text-left w-full focus:outline-none transition-[padding] ${props.mobile ? "pr-7" : ""} group-hover/session:pr-7 group-focus-within/session:pr-7 group-active/session:pr-7 ${props.dense ? "py-0.5" : "py-1"}`}
-    onPointerDown={props.warmPress}
-    onPointerEnter={props.warmHover}
-    onPointerLeave={props.cancelHoverPrefetch}
-    onFocus={props.warmFocus}
-    onClick={() => {
-      props.setHoverSession(undefined)
-      if (props.sidebarOpened()) return
-      props.clearHoverProjectSoon()
-    }}
-  >
-    <div class="flex items-center gap-1 w-full">
-      <div
-        class="shrink-0 size-6 flex items-center justify-center"
-        style={{ color: props.tint() ?? "var(--icon-interactive-base)" }}
+  <div class="flex items-center gap-0.5 min-w-0 w-full">
+    <Show when={props.hasChild()} fallback={<div class="size-4 shrink-0" />}>
+      <button
+        type="button"
+        class="size-4 shrink-0 rounded-sm flex items-center justify-center text-icon-weak hover:bg-surface-base-hover"
+        aria-label={props.openChild() ? "Collapse child sessions" : "Expand child sessions"}
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          props.onChildToggle()
+        }}
       >
-        <Switch fallback={<Icon name="dash" size="small" class="text-icon-weak" />}>
-          <Match when={props.isWorking()}>
-            <Spinner class="size-[15px]" />
-          </Match>
-          <Match when={props.hasPermissions()}>
-            <div class="size-1.5 rounded-full bg-surface-warning-strong" />
-          </Match>
-          <Match when={props.hasError()}>
-            <div class="size-1.5 rounded-full bg-text-diff-delete-base" />
-          </Match>
-          <Match when={props.unseenCount() > 0}>
-            <div class="size-1.5 rounded-full bg-text-interactive-base" />
-          </Match>
-        </Switch>
+        <Icon name={props.openChild() ? "chevron-down" : "chevron-right"} size="small" />
+      </button>
+    </Show>
+    <A
+      href={`/${props.slug}/session/${props.session.id}`}
+      class={`flex items-center justify-between gap-3 min-w-0 text-left w-full focus:outline-none transition-[padding] ${props.mobile ? "pr-7" : ""} group-hover/session:pr-7 group-focus-within/session:pr-7 group-active/session:pr-7 ${props.dense ? "py-0.5" : "py-1"}`}
+      onPointerDown={props.warmPress}
+      onPointerEnter={props.warmHover}
+      onPointerLeave={props.cancelHoverPrefetch}
+      onFocus={props.warmFocus}
+      onClick={() => {
+        props.setHoverSession(undefined)
+        if (props.sidebarOpened()) return
+        props.clearHoverProjectSoon()
+      }}
+    >
+      <div class="flex items-center gap-1 w-full min-w-0">
+        <div
+          class="shrink-0 size-6 flex items-center justify-center"
+          style={{ color: props.tint() ?? "var(--icon-interactive-base)" }}
+        >
+          <Switch fallback={<Icon name="dash" size="small" class="text-icon-weak" />}>
+            <Match when={props.isWorking()}>
+              <Spinner class="size-[15px]" />
+            </Match>
+            <Match when={props.hasPermissions()}>
+              <div class="size-1.5 rounded-full bg-surface-warning-strong" />
+            </Match>
+            <Match when={props.hasError()}>
+              <div class="size-1.5 rounded-full bg-text-diff-delete-base" />
+            </Match>
+            <Match when={props.unseenCount() > 0}>
+              <div class="size-1.5 rounded-full bg-text-interactive-base" />
+            </Match>
+          </Switch>
+        </div>
+        <div class="grow-1 min-w-0 overflow-hidden">
+          <span
+            classList={{
+              "text-14-regular text-text-strong": !props.child(),
+              "text-12-regular text-text-weak": props.child(),
+            }}
+            class="block min-w-0 overflow-hidden text-ellipsis truncate"
+          >
+            {props.session.title}
+          </span>
+          <Show when={props.child()}>
+            <span class="mt-0.5 block text-11-regular text-text-weak min-w-0 overflow-hidden text-ellipsis truncate">
+              {props.agent() + " • " + props.state()}
+            </span>
+          </Show>
+        </div>
       </div>
-      <span class="text-14-regular text-text-strong grow-1 min-w-0 overflow-hidden text-ellipsis truncate">
-        {props.session.title}
-      </span>
-    </div>
-  </A>
+    </A>
+  </div>
 )
 
 const SessionHoverPreview = (props: {
@@ -221,6 +259,17 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const tint = createMemo(() => {
     return messageAgentColor(sessionStore.message[props.session.id], sessionStore.agent)
   })
+  const agent = createMemo(() => {
+    const list = sessionStore.message[props.session.id]
+    if (!list) return language.t("common.unknown")
+    for (let i = list.length - 1; i >= 0; i--) {
+      const item = list[i]
+      if (item.role !== "user" || !item.agent) continue
+      return item.agent
+    }
+    return language.t("common.unknown")
+  })
+  const state = createMemo(() => (isWorking() ? "active" : "completed"))
 
   const hoverMessages = createMemo(() =>
     sessionStore.message[props.session.id]?.filter((message): message is UserMessage => message.role === "user"),
@@ -280,6 +329,12 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       slug={props.slug}
       mobile={props.mobile}
       dense={props.dense}
+      child={() => !!props.child}
+      agent={agent}
+      state={state}
+      hasChild={() => !!props.hasChild}
+      openChild={() => !!props.openChild}
+      onChildToggle={() => props.onChildToggle?.()}
       tint={tint}
       isWorking={isWorking}
       hasPermissions={hasPermissions}
@@ -298,8 +353,12 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   return (
     <div
       data-session-id={props.session.id}
-      class="group/session relative w-full rounded-md cursor-default pl-2 pr-3 transition-colors
+      class="group/session relative w-full rounded-md cursor-default pr-3 transition-colors
              hover:bg-surface-raised-base-hover [&:has(:focus-visible)]:bg-surface-raised-base-hover has-[[data-expanded]]:bg-surface-raised-base-hover has-[.active]:bg-surface-base-active"
+      classList={{
+        "pl-2": !props.child,
+        "pl-0": !!props.child,
+      }}
     >
       <Show
         when={hoverEnabled()}
