@@ -21,8 +21,8 @@ export namespace Process {
 
   export interface Result {
     code: number
-    stdout: Buffer
-    stderr: Buffer
+    stdout: Buffer<ArrayBufferLike>
+    stderr: Buffer<ArrayBufferLike>
   }
 
   export interface TextResult extends Result {
@@ -32,10 +32,10 @@ export namespace Process {
   export class RunFailedError extends Error {
     readonly cmd: string[]
     readonly code: number
-    readonly stdout: Buffer
-    readonly stderr: Buffer
+    readonly stdout: Buffer<ArrayBufferLike>
+    readonly stderr: Buffer<ArrayBufferLike>
 
-    constructor(cmd: string[], code: number, stdout: Buffer, stderr: Buffer) {
+    constructor(cmd: string[], code: number, stdout: Buffer<ArrayBufferLike>, stderr: Buffer<ArrayBufferLike>) {
       const text = stderr.toString().trim()
       super(
         text
