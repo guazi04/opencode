@@ -12,6 +12,7 @@ export namespace PackageRegistry {
   export async function info(pkg: string, field: string, cwd?: string): Promise<string | null> {
     const { code, stdout, stderr } = await Process.run([which(), "info", pkg, field], {
       cwd,
+      timeout: 15_000,
       env: {
         ...process.env,
         BUN_BE_BUN: "1",

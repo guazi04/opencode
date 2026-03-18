@@ -38,7 +38,7 @@ describe("tool.registry", () => {
         expect(ids).toContain("hello")
       },
     })
-  })
+  }, { timeout: 30_000 })
 
   test("loads tools from .opencode/tools (plural)", async () => {
     await using tmp = await tmpdir({
@@ -72,7 +72,7 @@ describe("tool.registry", () => {
         expect(ids).toContain("hello")
       },
     })
-  })
+  }, { timeout: 30_000 })
 
   test("loads tools with external dependencies without crashing", async () => {
     await using tmp = await tmpdir({
@@ -118,5 +118,5 @@ describe("tool.registry", () => {
         expect(ids).toContain("cowsay")
       },
     })
-  })
+  }, { timeout: 30_000 })
 })

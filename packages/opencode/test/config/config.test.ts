@@ -770,7 +770,7 @@ test("installs dependencies in writable OPENCODE_CONFIG_DIR", async () => {
     if (prev === undefined) delete process.env.OPENCODE_CONFIG_DIR
     else process.env.OPENCODE_CONFIG_DIR = prev
   }
-})
+}, { timeout: 30_000 })
 
 test("serializes concurrent config dependency installs", async () => {
   await using tmp = await tmpdir()
@@ -803,7 +803,7 @@ test("serializes concurrent config dependency installs", async () => {
   expect(seen.toSorted()).toEqual(dirs.toSorted())
   expect(await Filesystem.exists(path.join(dirs[0], "package.json"))).toBe(true)
   expect(await Filesystem.exists(path.join(dirs[1], "package.json"))).toBe(true)
-})
+}, { timeout: 30_000 })
 
 test("resolves scoped npm plugins in config", async () => {
   await using tmp = await tmpdir({
