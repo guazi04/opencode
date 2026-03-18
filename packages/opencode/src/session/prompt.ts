@@ -322,7 +322,7 @@ export namespace SessionPrompt {
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
       if (
         lastAssistant?.finish &&
-        !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
+        !["tool-calls", "unknown", "length"].includes(lastAssistant.finish) &&
         lastUser.id < lastAssistant.id
       ) {
         log.info("exiting loop", { sessionID })
@@ -698,14 +698,15 @@ export namespace SessionPrompt {
       }
 
       // Handle finishReason: "length" (output truncated by token limit)
-      log.warn("loop-finish", {
+      log.info("loop-finish", {
         step,
         finish: processor.message.finish,
+        nearMax: processor.nearMax,
         lengthCount,
         hasError: !!processor.message.error,
         result,
       })
-      if (processor.message.finish === "length") {
+      if (processor.message.finish === "length" || processor.nearMax) {
         lengthCount++
         if (lengthCount >= MAX_LENGTH_CONTINUES) {
           processor.message.error = new MessageV2.OutputLengthError({}).toObject()
@@ -719,7 +720,8 @@ export namespace SessionPrompt {
       lengthCount = 0
 
       // Check if model finished (finish reason is not "tool-calls" or "unknown")
-      const modelFinished = processor.message.finish && !["tool-calls", "unknown"].includes(processor.message.finish)
+      const modelFinished =
+        processor.message.finish && !["tool-calls", "unknown", "length"].includes(processor.message.finish)
 
       if (modelFinished && !processor.message.error) {
         if (format.type === "json_schema") {

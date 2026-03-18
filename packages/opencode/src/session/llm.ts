@@ -185,7 +185,7 @@ export namespace LLM {
         })
       },
       async experimental_repairToolCall(failed) {
-        l.warn("repairToolCall invoked", {
+        l.info("repairToolCall invoked", {
           tool: failed.toolCall.toolName,
           argsLength:
             typeof failed.toolCall.input === "string"
@@ -203,21 +203,6 @@ export namespace LLM {
           return {
             ...failed.toolCall,
             toolName: lower,
-          }
-        }
-        // Known tool but args truncated (JSON parse failure)
-        if (tools[failed.toolCall.toolName] || tools[lower]) {
-          return {
-            ...failed.toolCall,
-            input: JSON.stringify({
-              tool: failed.toolCall.toolName,
-              error:
-                "Tool call arguments were truncated because output exceeded the token limit. " +
-                "Do NOT retry with the same approach. " +
-                "For large file writes, split content into multiple smaller Write calls " +
-                "(write first portion, then use Edit to append remaining sections).",
-            }),
-            toolName: "invalid",
           }
         }
         // Genuinely unknown tool

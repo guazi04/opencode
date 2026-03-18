@@ -39,6 +39,7 @@ export namespace SessionProcessor {
     let blocked = false
     let attempt = 0
     let needsCompaction = false
+    let nearMax = false
     const deltas: Record<string, { text: string; bytes: number; path: string | undefined; last: number }> = {}
     const PATH_RE = /"filePath"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/
     const THROTTLE_MS = 500
@@ -48,12 +49,16 @@ export namespace SessionProcessor {
       get message() {
         return input.assistantMessage
       },
+      get nearMax() {
+        return nearMax
+      },
       partFromToolCall(toolCallID: string) {
         return toolcalls[toolCallID]
       },
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
         needsCompaction = false
+        nearMax = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         while (true) {
           let idle = false
@@ -345,8 +350,9 @@ export namespace SessionProcessor {
                       const output = value.usage?.outputTokens ?? 0
                       const max = ProviderTransform.maxOutputTokens(input.model)
                       const near = value.finishReason === "tool-calls" && output >= max * NEAR_MAX
-                      const reason = near ? "length" : value.finishReason
-                      log.warn("finish-step", {
+                      const reason = value.finishReason
+                      nearMax = near
+                      log.info("finish-step", {
                         finishReason: reason,
                         originalReason: value.finishReason,
                         near,
@@ -468,7 +474,7 @@ export namespace SessionProcessor {
                 } finally {
                   if (!needsCompaction && !ctl.signal.aborted) {
                     if (active.size === 0) arm()
-                    else arm(STREAM_IDLE_TIMEOUT_MS * 4)
+                    else arm(STREAM_IDLE_TIMEOUT_MS * 2)
                   }
                 }
               }
@@ -550,17 +556,6 @@ export namespace SessionProcessor {
                 },
               })
             }
-          }
-          // Check if ALL tools were aborted (likely due to output truncation)
-          const parts = await MessageV2.parts(input.assistantMessage.id)
-          const toolParts = parts.filter((p) => p.type === "tool")
-          const aborted = toolParts.filter(
-            (p) => p.state.status === "error" && p.state.error === "Tool execution aborted",
-          ).length
-          if (toolParts.length > 0 && aborted === toolParts.length) {
-            input.assistantMessage.error = new MessageV2.AbortedError({
-              message: "All tool calls were aborted (likely due to output truncation)",
-            }).toObject()
           }
           input.assistantMessage.time.completed = Date.now()
           await Session.updateMessage(input.assistantMessage)

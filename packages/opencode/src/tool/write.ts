@@ -12,11 +12,9 @@ import { Filesystem } from "../util/filesystem"
 import { Instance } from "../project/instance"
 import { trimDiff } from "./edit"
 import { assertExternalDirectory } from "./external-directory"
-import { Log } from "@/util/log"
 
 const MAX_DIAGNOSTICS_PER_FILE = 20
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
-const log = Log.create({ service: "tool.write" })
 
 export const WriteTool = Tool.define("write", {
   description: DESCRIPTION,
@@ -26,11 +24,6 @@ export const WriteTool = Tool.define("write", {
   }),
   async execute(params, ctx) {
     const filepath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath)
-    log.warn("write-tool-execute", {
-      filepath,
-      contentLength: params.content?.length ?? 0,
-      contentTail: params.content?.slice(-50) ?? "",
-    })
     await assertExternalDirectory(ctx, filepath)
 
     const exists = await Filesystem.exists(filepath)
@@ -59,9 +52,6 @@ export const WriteTool = Tool.define("write", {
     await FileTime.read(ctx.sessionID, filepath)
 
     let output = "Wrote file successfully."
-    if (params.content.length > 50_000) {
-      output += `\n\n⚠️ Warning: This file is very large (${params.content.length} chars). If it appears truncated, the model output may have hit token limits. Consider writing in smaller chunks.`
-    }
     await LSP.touchFile(filepath, true)
     const diagnostics = await LSP.diagnostics()
     const normalizedFilepath = Filesystem.normalizePath(filepath)
