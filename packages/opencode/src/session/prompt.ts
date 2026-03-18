@@ -698,6 +698,13 @@ export namespace SessionPrompt {
       }
 
       // Handle finishReason: "length" (output truncated by token limit)
+      log.warn("loop-finish", {
+        step,
+        finish: processor.message.finish,
+        lengthCount,
+        hasError: !!processor.message.error,
+        result,
+      })
       if (processor.message.finish === "length") {
         lengthCount++
         if (lengthCount >= MAX_LENGTH_CONTINUES) {

@@ -212,6 +212,14 @@ export namespace SessionProcessor {
                       break
 
                     case "tool-call": {
+                      log.info("tool-call", {
+                        tool: value.toolName,
+                        inputLength:
+                          typeof value.input === "string"
+                            ? value.input.length
+                            : JSON.stringify(value.input ?? "").length,
+                        toolCallId: value.toolCallId,
+                      })
                       const match = toolcalls[value.toolCallId]
                       if (match) {
                         active.add(value.toolCallId)
@@ -261,6 +269,12 @@ export namespace SessionProcessor {
                     }
                     case "tool-result": {
                       const match = toolcalls[value.toolCallId]
+                      log.info("tool-result", {
+                        tool: match?.tool ?? "unknown",
+                        status: "completed",
+                        outputLength: typeof value.output.output === "string" ? value.output.output.length : 0,
+                        toolCallId: value.toolCallId,
+                      })
                       if (match && match.state.status === "running") {
                         await Session.updatePart({
                           ...match,
@@ -326,6 +340,15 @@ export namespace SessionProcessor {
                       break
 
                     case "finish-step":
+                      log.warn("finish-step", {
+                        finishReason: value.finishReason,
+                        inputTokens: value.usage?.inputTokens,
+                        outputTokens: value.usage?.outputTokens,
+                        totalTokens: value.usage?.totalTokens,
+                        hasPendingTools: Object.values(toolcalls).some(
+                          (item) => item.state.status === "pending" || item.state.status === "running",
+                        ),
+                      })
                       const usage = Session.getUsage({
                         model: input.model,
                         usage: value.usage,
@@ -440,7 +463,7 @@ export namespace SessionProcessor {
                   }
                 }
               }
-                if (idle) throw ctl.signal.reason
+              if (idle) throw ctl.signal.reason
             } finally {
               clear()
             }
@@ -525,6 +548,11 @@ export namespace SessionProcessor {
           const aborted = toolParts.filter(
             (p) => p.state.status === "error" && p.state.error === "Tool execution aborted",
           ).length
+          log.warn("tool-abort-check", {
+            totalToolParts: toolParts.length,
+            abortedCount: aborted,
+            allAborted: toolParts.length > 0 && aborted === toolParts.length,
+          })
           if (toolParts.length > 0 && aborted === toolParts.length) {
             input.assistantMessage.error = new MessageV2.AbortedError({
               message: "All tool calls were aborted (likely due to output truncation)",

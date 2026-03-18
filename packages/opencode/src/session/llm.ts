@@ -151,15 +151,10 @@ export namespace LLM {
     // For Anthropic: budgetTokens must be < max_tokens, and both share the output pool
     // Ensure enough room for both thinking and actual output
     const MIN_OUTPUT_SPACE = 16_000
-    const limit = isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
-    const budget = Number(
-      options.thinking?.budgetTokens ??
-      options.reasoningConfig?.budgetTokens ??
-      0,
-    )
-    const maxOutputTokens = limit !== undefined && budget > 0
-      ? Math.max(limit, budget + MIN_OUTPUT_SPACE)
-      : limit
+    const limit =
+      isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
+    const budget = Number(options.thinking?.budgetTokens ?? options.reasoningConfig?.budgetTokens ?? 0)
+    const maxOutputTokens = limit !== undefined && budget > 0 ? Math.max(limit, budget + MIN_OUTPUT_SPACE) : limit
 
     const tools = await resolveTools(input)
 
@@ -190,6 +185,15 @@ export namespace LLM {
         })
       },
       async experimental_repairToolCall(failed) {
+        l.warn("repairToolCall invoked", {
+          tool: failed.toolCall.toolName,
+          argsLength:
+            typeof failed.toolCall.input === "string"
+              ? failed.toolCall.input.length
+              : JSON.stringify(failed.toolCall.input ?? "").length,
+          errorMessage: failed.error.message,
+          errorType: failed.error.constructor.name,
+        })
         const lower = failed.toolCall.toolName.toLowerCase()
         if (lower !== failed.toolCall.toolName && tools[lower]) {
           l.info("repairing tool call", {
