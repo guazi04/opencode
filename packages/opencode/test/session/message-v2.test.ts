@@ -592,6 +592,109 @@ describe("session.message-v2.toModelMessage", () => {
     expect(MessageV2.toModelMessages(input, model)).toStrictEqual([])
   })
 
+  test("keeps errored assistant messages with tools and converts all tools to error results", () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "run tool",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(
+          assistantID,
+          userID,
+          new MessageV2.APIError({ message: "boom", isRetryable: true }).toObject() as MessageV2.APIError,
+        ),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "text",
+            text: "partial",
+          },
+          {
+            ...basePart(assistantID, "a2"),
+            type: "tool",
+            callID: "call-completed",
+            tool: "bash",
+            state: {
+              status: "completed",
+              input: { cmd: "ls" },
+              output: "ok",
+              title: "Bash",
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+          {
+            ...basePart(assistantID, "a3"),
+            type: "tool",
+            callID: "call-error",
+            tool: "read",
+            state: {
+              status: "error",
+              input: { path: "/tmp" },
+              error: "tool failed",
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "run tool" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "partial" },
+          {
+            type: "tool-call",
+            toolCallId: "call-completed",
+            toolName: "bash",
+            input: { cmd: "ls" },
+            providerExecuted: undefined,
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-error",
+            toolName: "read",
+            input: { path: "/tmp" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-completed",
+            toolName: "bash",
+            output: { type: "error-text", value: "boom" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-error",
+            toolName: "read",
+            output: { type: "error-text", value: "boom" },
+          },
+        ],
+      },
+    ])
+  })
+
   test("includes aborted assistant messages only when they have non-step-start/reasoning content", () => {
     const assistantID1 = "m-assistant-1"
     const assistantID2 = "m-assistant-2"

@@ -676,14 +676,21 @@ export namespace MessageV2 {
       if (msg.info.role === "assistant") {
         const differentModel = `${model.providerID}/${model.id}` !== `${msg.info.providerID}/${msg.info.modelID}`
         const media: Array<{ mime: string; url: string }> = []
-
-        if (
+        const hasTool = msg.parts.some((part) => part.type === "tool")
+        const keepAbort =
           msg.info.error &&
-          !(
-            MessageV2.AbortedError.isInstance(msg.info.error) &&
-            msg.parts.some((part) => part.type !== "step-start" && part.type !== "reasoning")
-          )
-        ) {
+          MessageV2.AbortedError.isInstance(msg.info.error) &&
+          msg.parts.some((part) => part.type !== "step-start" && part.type !== "reasoning")
+        const forceToolError = !!msg.info.error && !keepAbort
+        const err =
+          msg.info.error &&
+          forceToolError &&
+          "message" in msg.info.error.data &&
+          typeof msg.info.error.data.message === "string"
+            ? msg.info.error.data.message
+            : "[Tool execution was interrupted]"
+
+        if (forceToolError && !hasTool) {
           continue
         }
         const assistantMessage: UIMessage = {
@@ -704,6 +711,17 @@ export namespace MessageV2 {
             })
           if (part.type === "tool") {
             toolNames.add(part.tool)
+            if (forceToolError) {
+              assistantMessage.parts.push({
+                type: ("tool-" + part.tool) as `tool-${string}`,
+                state: "output-error",
+                toolCallId: part.callID,
+                input: part.state.input,
+                errorText: err,
+                ...(differentModel ? {} : { callProviderMetadata: part.metadata }),
+              })
+              continue
+            }
             if (part.state.status === "completed") {
               const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output
               const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
