@@ -121,6 +121,7 @@ export namespace Agent {
           PermissionNext.fromConfig({
             todoread: "deny",
             todowrite: "deny",
+            doom_loop: "deny",
           }),
           user,
         ),
@@ -142,6 +143,7 @@ export namespace Agent {
             websearch: "allow",
             codesearch: "allow",
             read: "allow",
+            doom_loop: "deny",
             external_directory: {
               "*": "ask",
               ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
