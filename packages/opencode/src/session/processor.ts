@@ -20,7 +20,7 @@ import type { SessionID, MessageID } from "./schema"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
-  const STREAM_IDLE_TIMEOUT_MS = 75_000
+  const STREAM_IDLE_TIMEOUT_MS = 600_000
   const STREAM_IDLE_TIMEOUT_S = STREAM_IDLE_TIMEOUT_MS / 1000
   const NEAR_MAX = 0.95
   const log = Log.create({ service: "session.processor" })
