@@ -293,6 +293,8 @@ export namespace SessionPrompt {
     let structuredOutput: unknown | undefined
 
     let step = 0
+    let lengthCount = 0
+    const MAX_LENGTH_CONTINUES = 3
     const session = await Session.get(sessionID)
     while (true) {
       SessionStatus.set(sessionID, { type: "busy" })
@@ -694,6 +696,20 @@ export namespace SessionPrompt {
         await Session.updateMessage(processor.message)
         break
       }
+
+      // Handle finishReason: "length" (output truncated by token limit)
+      if (processor.message.finish === "length") {
+        lengthCount++
+        if (lengthCount >= MAX_LENGTH_CONTINUES) {
+          processor.message.error = new MessageV2.OutputLengthError({}).toObject()
+          await Session.updateMessage(processor.message)
+          break
+        }
+        // Don't treat as finished — continue the loop
+        continue
+      }
+      // Reset counter on non-length finish
+      lengthCount = 0
 
       // Check if model finished (finish reason is not "tool-calls" or "unknown")
       const modelFinished = processor.message.finish && !["tool-calls", "unknown"].includes(processor.message.finish)

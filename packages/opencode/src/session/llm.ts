@@ -147,8 +147,19 @@ export namespace LLM {
       },
     )
 
-    const maxOutputTokens =
-      isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
+    // Coordinate maxOutputTokens with thinking budget
+    // For Anthropic: budgetTokens must be < max_tokens, and both share the output pool
+    // Ensure enough room for both thinking and actual output
+    const MIN_OUTPUT_SPACE = 16_000
+    const limit = isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
+    const budget = Number(
+      options.thinking?.budgetTokens ??
+      options.reasoningConfig?.budgetTokens ??
+      0,
+    )
+    const maxOutputTokens = limit !== undefined && budget > 0
+      ? Math.max(limit, budget + MIN_OUTPUT_SPACE)
+      : limit
 
     const tools = await resolveTools(input)
 
@@ -190,6 +201,22 @@ export namespace LLM {
             toolName: lower,
           }
         }
+        // Known tool but args truncated (JSON parse failure)
+        if (tools[failed.toolCall.toolName] || tools[lower]) {
+          return {
+            ...failed.toolCall,
+            input: JSON.stringify({
+              tool: failed.toolCall.toolName,
+              error:
+                "Tool call arguments were truncated because output exceeded the token limit. " +
+                "Do NOT retry with the same approach. " +
+                "For large file writes, split content into multiple smaller Write calls " +
+                "(write first portion, then use Edit to append remaining sections).",
+            }),
+            toolName: "invalid",
+          }
+        }
+        // Genuinely unknown tool
         return {
           ...failed.toolCall,
           input: JSON.stringify({
