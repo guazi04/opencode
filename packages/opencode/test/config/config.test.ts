@@ -21,6 +21,8 @@ function testFileURL(...segments: string[]): string {
   return pathToFileURL(path.resolve(path.sep, ...segments)).href
 }
 
+
+
 afterEach(async () => {
   await fs.rm(managedConfigDir, { force: true, recursive: true }).catch(() => {})
 })
@@ -741,45 +743,34 @@ test("does not try to install dependencies in read-only OPENCODE_CONFIG_DIR", as
   }
 })
 
-test(
-  "installs dependencies in writable OPENCODE_CONFIG_DIR",
-  async () => {
-    const run = spyOn(BunProc, "run").mockImplementation(async () => ({
-      code: 0,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.alloc(0),
-    }))
+test("installs dependencies in writable OPENCODE_CONFIG_DIR", async () => {
+  await using tmp = await tmpdir<string>({
+    init: async (dir) => {
+      const cfg = path.join(dir, "configdir")
+      await fs.mkdir(cfg, { recursive: true })
+      return cfg
+    },
+  })
 
-    await using tmp = await tmpdir<string>({
-      init: async (dir) => {
-        const cfg = path.join(dir, "configdir")
-        await fs.mkdir(cfg, { recursive: true })
-        return cfg
+  const prev = process.env.OPENCODE_CONFIG_DIR
+  process.env.OPENCODE_CONFIG_DIR = tmp.extra
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        await Config.get()
+        await Config.waitForDependencies()
       },
     })
 
-    const prev = process.env.OPENCODE_CONFIG_DIR
-    process.env.OPENCODE_CONFIG_DIR = tmp.extra
-
-    try {
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          await Config.get()
-          await Config.waitForDependencies()
-        },
-      })
-
-      expect(await Filesystem.exists(path.join(tmp.extra, "package.json"))).toBe(true)
-      expect(await Filesystem.exists(path.join(tmp.extra, ".gitignore"))).toBe(true)
-    } finally {
-      run.mockRestore()
-      if (prev === undefined) delete process.env.OPENCODE_CONFIG_DIR
-      else process.env.OPENCODE_CONFIG_DIR = prev
-    }
-  },
-  { timeout: 30_000 },
-)
+    expect(await Filesystem.exists(path.join(tmp.extra, "package.json"))).toBe(true)
+    expect(await Filesystem.exists(path.join(tmp.extra, ".gitignore"))).toBe(true)
+  } finally {
+    if (prev === undefined) delete process.env.OPENCODE_CONFIG_DIR
+    else process.env.OPENCODE_CONFIG_DIR = prev
+  }
+})
 
 test("serializes concurrent config dependency installs", async () => {
   await using tmp = await tmpdir()
@@ -1808,7 +1799,10 @@ describe("getPluginName", () => {
       init: async (dir) => {
         const pluginDir = path.join(dir, "my-plugin", "src")
         await fs.mkdir(pluginDir, { recursive: true })
-        await Filesystem.write(path.join(dir, "my-plugin", "package.json"), JSON.stringify({ name: "my-plugin" }))
+        await Filesystem.write(
+          path.join(dir, "my-plugin", "package.json"),
+          JSON.stringify({ name: "my-plugin" }),
+        )
         await Filesystem.write(path.join(pluginDir, "index.ts"), "export default {}")
       },
     })
