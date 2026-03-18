@@ -519,6 +519,17 @@ export namespace SessionProcessor {
               })
             }
           }
+          // Check if ALL tools were aborted (likely due to output truncation)
+          const parts = await MessageV2.parts(input.assistantMessage.id)
+          const toolParts = parts.filter((p) => p.type === "tool")
+          const aborted = toolParts.filter(
+            (p) => p.state.status === "error" && p.state.error === "Tool execution aborted",
+          ).length
+          if (toolParts.length > 0 && aborted === toolParts.length) {
+            input.assistantMessage.error = new MessageV2.AbortedError({
+              message: "All tool calls were aborted (likely due to output truncation)",
+            }).toObject()
+          }
           input.assistantMessage.time.completed = Date.now()
           await Session.updateMessage(input.assistantMessage)
           if (needsCompaction) return "compact"
