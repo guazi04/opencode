@@ -10,12 +10,8 @@ export namespace PackageRegistry {
   }
 
   export async function info(pkg: string, field: string, cwd?: string): Promise<string | null> {
-    const ms = process.env.OPENCODE_TEST_HOME ? 2_000 : process.env.CI ? 5_000 : 10_000
     const { code, stdout, stderr } = await Process.run([which(), "info", pkg, field], {
       cwd,
-      abort: AbortSignal.timeout(ms),
-      kill: "SIGTERM",
-      timeout: 2_000,
       env: {
         ...process.env,
         BUN_BE_BUN: "1",
