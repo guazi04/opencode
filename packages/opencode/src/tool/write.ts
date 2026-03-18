@@ -59,6 +59,9 @@ export const WriteTool = Tool.define("write", {
     await FileTime.read(ctx.sessionID, filepath)
 
     let output = "Wrote file successfully."
+    if (params.content.length > 50_000) {
+      output += `\n\n⚠️ Warning: This file is very large (${params.content.length} chars). If it appears truncated, the model output may have hit token limits. Consider writing in smaller chunks.`
+    }
     await LSP.touchFile(filepath, true)
     const diagnostics = await LSP.diagnostics()
     const normalizedFilepath = Filesystem.normalizePath(filepath)

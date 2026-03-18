@@ -9,6 +9,7 @@ import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
 import { Plugin } from "@/plugin"
 import type { Provider } from "@/provider/provider"
+import { ProviderTransform } from "@/provider/transform"
 import { LLM } from "./llm"
 import { Config } from "@/config/config"
 import { SessionCompaction } from "./compaction"
@@ -21,6 +22,7 @@ export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
   const STREAM_IDLE_TIMEOUT_MS = 75_000
   const STREAM_IDLE_TIMEOUT_S = STREAM_IDLE_TIMEOUT_MS / 1000
+  const NEAR_MAX = 0.95
   const log = Log.create({ service: "session.processor" })
 
   export type Info = Awaited<ReturnType<typeof create>>
@@ -340,10 +342,17 @@ export namespace SessionProcessor {
                       break
 
                     case "finish-step":
+                      const output = value.usage?.outputTokens ?? 0
+                      const max = ProviderTransform.maxOutputTokens(input.model)
+                      const near = value.finishReason === "tool-calls" && output >= max * NEAR_MAX
+                      const reason = near ? "length" : value.finishReason
                       log.warn("finish-step", {
-                        finishReason: value.finishReason,
+                        finishReason: reason,
+                        originalReason: value.finishReason,
+                        near,
                         inputTokens: value.usage?.inputTokens,
-                        outputTokens: value.usage?.outputTokens,
+                        outputTokens: output,
+                        maxOutputTokens: max,
                         totalTokens: value.usage?.totalTokens,
                         hasPendingTools: Object.values(toolcalls).some(
                           (item) => item.state.status === "pending" || item.state.status === "running",
@@ -354,12 +363,12 @@ export namespace SessionProcessor {
                         usage: value.usage,
                         metadata: value.providerMetadata,
                       })
-                      input.assistantMessage.finish = value.finishReason
+                      input.assistantMessage.finish = reason
                       input.assistantMessage.cost += usage.cost
                       input.assistantMessage.tokens = usage.tokens
                       await Session.updatePart({
                         id: PartID.ascending(),
-                        reason: value.finishReason,
+                        reason,
                         snapshot: await Snapshot.track(),
                         messageID: input.assistantMessage.id,
                         sessionID: input.assistantMessage.sessionID,
@@ -548,11 +557,6 @@ export namespace SessionProcessor {
           const aborted = toolParts.filter(
             (p) => p.state.status === "error" && p.state.error === "Tool execution aborted",
           ).length
-          log.warn("tool-abort-check", {
-            totalToolParts: toolParts.length,
-            abortedCount: aborted,
-            allAborted: toolParts.length > 0 && aborted === toolParts.length,
-          })
           if (toolParts.length > 0 && aborted === toolParts.length) {
             input.assistantMessage.error = new MessageV2.AbortedError({
               message: "All tool calls were aborted (likely due to output truncation)",
