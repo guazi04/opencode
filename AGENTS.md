@@ -126,3 +126,33 @@ const table = sqliteTable("session", {
 ## Type Checking
 
 - Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
+
+## Git Workflow (intsig fork)
+
+**Protected branch**: `dev` on `intsig` remote — push_access_level=0, allow_force_push=false. All changes via MR only.
+
+| Remote | URL | Role |
+|--------|-----|------|
+| `origin` | `github.com/anomalyco/opencode` | Official upstream (read-only) |
+| `fork` | `github.com/guazi04/opencode` | GitHub fork for upstream PRs |
+| `intsig` | `gitlab.intsig.net/iself-team/opencode` | Company GitLab (MR target) |
+
+### DO
+
+- All code changes enter `dev` (on intsig) via MR
+- Feature/fix branches: `fix/*`, `feat/*` → push to `fork` remote for upstream PRs, **squash merge** MR to `dev` on intsig
+- Upstream sync: create `sync/upstream-MMDD` from `dev` → `git merge origin/dev` → **regular merge** (not squash) MR to `dev` → delete sync branch
+- Load `sync-upstream-opencode` skill for detailed upstream sync workflow
+- Force push feature/PR branches only with `--force-with-lease`
+
+### DON'T
+
+- Never push directly to `dev` on intsig (branch protection enforced)
+- Never force push to `dev`
+- Never push PR branches (`fix/*`, `feat/*`) to `origin` or `intsig` — only to `fork`
+- Never squash merge upstream sync MRs (preserves upstream history)
+- Never delete `dev` on intsig
+
+### Legacy
+
+- `intsig-dev` branch: predecessor of `dev`, kept temporarily on GitLab for reference. Do NOT use for new work.
