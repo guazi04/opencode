@@ -404,6 +404,7 @@ function createGlobalSync() {
       return globalStore.error
     },
     child: children.child,
+    peek: children.peek,
     bootstrap,
     updateConfig,
     project: projectApi,
