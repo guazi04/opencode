@@ -150,14 +150,14 @@ export namespace Config {
           result.mode ??= {}
           result.plugin ??= []
         }
-      }
 
-      deps.push(
-        iife(async () => {
-          const shouldInstall = await needsInstall(dir)
-          if (shouldInstall) await installDependencies(dir)
-        }),
-      )
+        deps.push(
+          iife(async () => {
+            const shouldInstall = await needsInstall(dir)
+            if (shouldInstall) await installDependencies(dir)
+          }),
+        )
+      }
 
       result.command = mergeDeep(result.command ?? {}, await loadCommand(dir))
       result.agent = mergeDeep(result.agent, await loadAgent(dir))
@@ -177,7 +177,7 @@ export namespace Config {
       log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
     }
 
-    const active = Account.active()
+    const active = await Account.active()
     if (active?.active_org_id) {
       try {
         const [config, token] = await Promise.all([
@@ -1251,7 +1251,10 @@ export namespace Config {
         .object({
           auto: z.boolean().optional().describe("Enable automatic compaction when context is full (default: true)"),
           prune: z.boolean().optional().describe("Enable pruning of old tool outputs (default: true)"),
-          reclaim: z.boolean().optional().describe("Clear old tool outputs from storage after compaction (default: true)"),
+          reclaim: z
+            .boolean()
+            .optional()
+            .describe("Clear old tool outputs from storage after compaction (default: true)"),
           reserved: z
             .number()
             .int()

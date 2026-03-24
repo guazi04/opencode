@@ -1,7 +1,6 @@
 import type { Argv } from "yargs"
 import { spawn } from "child_process"
 import { Database } from "../../storage/db"
-import { Database as BunDatabase } from "bun:sqlite"
 import { UI } from "../ui"
 import { cmd } from "./cmd"
 import { JsonMigration } from "../../storage/json-migration"
@@ -26,9 +25,17 @@ const QueryCommand = cmd({
   handler: async (args: { query?: string; format: string }) => {
     const query = args.query as string | undefined
     if (query) {
-      const db = new BunDatabase(Database.Path, { readonly: true })
       try {
-        const result = db.query(query).all() as Record<string, unknown>[]
+        const client = Database.Client().$client
+        const result = (() => {
+          if ("prepare" in client && typeof client.prepare === "function") {
+            return client.prepare(query).all()
+          }
+          if ("query" in client && typeof client.query === "function") {
+            return client.query(query).all()
+          }
+          throw new Error("database client does not support queries")
+        })() as Record<string, unknown>[]
         if (args.format === "json") {
           console.log(JSON.stringify(result, null, 2))
         } else if (result.length > 0) {
@@ -41,8 +48,9 @@ const QueryCommand = cmd({
       } catch (err) {
         UI.error(err instanceof Error ? err.message : String(err))
         process.exit(1)
+      } finally {
+        Database.close()
       }
-      db.close()
       return
     }
     const child = spawn("sqlite3", [Database.Path], {
@@ -64,7 +72,6 @@ const MigrateCommand = cmd({
   command: "migrate",
   describe: "migrate JSON data to SQLite (merges with existing data)",
   handler: async () => {
-    const sqlite = new BunDatabase(Database.Path)
     const tty = process.stderr.isTTY
     const width = 36
     const orange = "\x1b[38;5;214m"
@@ -73,7 +80,7 @@ const MigrateCommand = cmd({
     let last = -1
     if (tty) process.stderr.write("\x1b[?25l")
     try {
-      const stats = await JsonMigration.run(sqlite, {
+      const stats = await JsonMigration.run(undefined, {
         progress: (event) => {
           const percent = Math.floor((event.current / event.total) * 100)
           if (percent === last) return
@@ -103,7 +110,7 @@ const MigrateCommand = cmd({
       UI.error(`Migration failed: ${err instanceof Error ? err.message : String(err)}`)
       process.exit(1)
     } finally {
-      sqlite.close()
+      Database.close()
     }
   },
 })

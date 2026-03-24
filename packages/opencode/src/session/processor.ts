@@ -13,7 +13,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { LLM } from "./llm"
 import { Config } from "@/config/config"
 import { SessionCompaction } from "./compaction"
-import { PermissionNext } from "@/permission"
+import { Permission } from "@/permission"
 import { Question } from "@/question"
 import { PartID } from "./schema"
 import type { SessionID, MessageID } from "./schema"
@@ -107,7 +107,7 @@ export namespace SessionProcessor {
                   input.abort.throwIfAborted()
                   switch (value.type) {
                     case "start":
-                      SessionStatus.set(input.sessionID, { type: "busy" })
+                      await SessionStatus.set(input.sessionID, { type: "busy" })
                       break
 
                     case "reasoning-start":
@@ -258,7 +258,7 @@ export namespace SessionProcessor {
                           )
                         ) {
                           const agent = await Agent.get(input.assistantMessage.agent)
-                          await PermissionNext.ask({
+                          await Permission.ask({
                             permission: "doom_loop",
                             patterns: [value.toolName],
                             sessionID: input.assistantMessage.sessionID,
@@ -322,7 +322,7 @@ export namespace SessionProcessor {
                         })
 
                         if (
-                          value.error instanceof PermissionNext.RejectedError ||
+                          value.error instanceof Permission.RejectedError ||
                           value.error instanceof Question.RejectedError
                         ) {
                           blocked = shouldBreak
@@ -350,7 +350,7 @@ export namespace SessionProcessor {
                       const output = value.usage?.outputTokens ?? 0
                       const max = ProviderTransform.maxOutputTokens(input.model)
                       const near = value.finishReason === "tool-calls" && output >= max * NEAR_MAX
-                      const reason = value.finishReason
+                      const reason = near ? "length" : value.finishReason
                       nearMax = near
                       log.info("finish-step", {
                         finishReason: reason,
@@ -509,7 +509,7 @@ export namespace SessionProcessor {
               if (retry !== undefined) {
                 attempt++
                 const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
-                SessionStatus.set(input.sessionID, {
+                await SessionStatus.set(input.sessionID, {
                   type: "retry",
                   attempt,
                   message: retry,
@@ -523,7 +523,7 @@ export namespace SessionProcessor {
                 sessionID: input.assistantMessage.sessionID,
                 error: input.assistantMessage.error,
               })
-              SessionStatus.set(input.sessionID, { type: "idle" })
+              await SessionStatus.set(input.sessionID, { type: "idle" })
             }
           }
           if (snapshot) {

@@ -37,9 +37,28 @@ export namespace PackageRegistry {
       return false
     }
 
-    const isRange = /[\s^~*xX<>|=]/.test(cachedVersion)
-    if (isRange) return !semver.satisfies(latestVersion, cachedVersion)
+    const latest = semver.valid(latestVersion)
+    if (!latest) {
+      log.warn("Invalid latest version from registry, using cached", { pkg, latestVersion, cachedVersion })
+      return false
+    }
 
-    return semver.lt(cachedVersion, latestVersion)
+    const isRange = /[\s^~*xX<>|=]/.test(cachedVersion)
+    if (isRange) {
+      const range = semver.validRange(cachedVersion)
+      if (!range) {
+        log.warn("Invalid cached range version, forcing reinstall", { pkg, cachedVersion, latestVersion: latest })
+        return true
+      }
+      return !semver.satisfies(latest, range)
+    }
+
+    const cached = semver.valid(cachedVersion)
+    if (!cached) {
+      log.warn("Invalid cached exact version, forcing reinstall", { pkg, cachedVersion, latestVersion: latest })
+      return true
+    }
+
+    return semver.lt(cached, latest)
   }
 }

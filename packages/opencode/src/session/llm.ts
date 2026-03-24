@@ -12,6 +12,7 @@ import {
   jsonSchema,
 } from "ai"
 import { mergeDeep, pipe } from "remeda"
+import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
@@ -20,7 +21,7 @@ import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
-import { PermissionNext } from "@/permission"
+import { Permission } from "@/permission"
 import { Auth } from "@/auth"
 
 export namespace LLM {
@@ -32,7 +33,7 @@ export namespace LLM {
     sessionID: string
     model: Provider.Model
     agent: Agent.Info
-    permission?: PermissionNext.Ruleset
+    permission?: Permission.Ruleset
     system: string[]
     abort: AbortSignal
     messages: ModelMessage[]
@@ -111,8 +112,20 @@ export namespace LLM {
       mergeDeep(variant),
     )
     if (isCodex) {
-      options.instructions = SystemPrompt.instructions()
+      options.instructions = system.join("\n")
     }
+
+    const messages = isCodex
+      ? input.messages
+      : [
+          ...system.map(
+            (x): ModelMessage => ({
+              role: "system",
+              content: x,
+            }),
+          ),
+          ...input.messages,
+        ]
 
     const params = await Plugin.trigger(
       "chat.params",
@@ -178,6 +191,31 @@ export namespace LLM {
       })
     }
 
+    if (language instanceof GitLabWorkflowLanguageModel) {
+      const workflowModel = language
+      workflowModel.toolExecutor = async (toolName, argsJson, _requestID) => {
+        const t = tools[toolName]
+        if (!t || !t.execute) {
+          return { result: "", error: `Unknown tool: ${toolName}` }
+        }
+        try {
+          const result = await t.execute!(JSON.parse(argsJson), {
+            toolCallId: _requestID,
+            messages: input.messages,
+            abortSignal: input.abort,
+          })
+          const output = typeof result === "string" ? result : (result?.output ?? JSON.stringify(result))
+          return {
+            result: output,
+            metadata: typeof result === "object" ? result?.metadata : undefined,
+            title: typeof result === "object" ? result?.title : undefined,
+          }
+        } catch (e: any) {
+          return { result: "", error: e.message ?? String(e) }
+        }
+      }
+    }
+
     return streamText({
       onError(error) {
         l.error("stream error", {
@@ -235,15 +273,7 @@ export namespace LLM {
         ...headers,
       },
       maxRetries: input.retries ?? 0,
-      messages: [
-        ...system.map(
-          (x): ModelMessage => ({
-            role: "system",
-            content: x,
-          }),
-        ),
-        ...input.messages,
-      ],
+      messages,
       model: wrapLanguageModel({
         model: language,
         middleware: [
@@ -269,9 +299,9 @@ export namespace LLM {
   }
 
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
-    const disabled = PermissionNext.disabled(
+    const disabled = Permission.disabled(
       Object.keys(input.tools),
-      PermissionNext.merge(input.agent.permission, input.permission ?? []),
+      Permission.merge(input.agent.permission, input.permission ?? []),
     )
     for (const tool of Object.keys(input.tools)) {
       if (input.user.tools?.[tool] === false || disabled.has(tool)) {

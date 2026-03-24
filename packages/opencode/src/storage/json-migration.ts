@@ -1,5 +1,3 @@
-import { Database } from "bun:sqlite"
-import { drizzle } from "drizzle-orm/bun-sqlite"
 import { Global } from "../global"
 import { Log } from "../util/log"
 import { ProjectTable } from "../project/project.sql"
@@ -9,6 +7,7 @@ import path from "path"
 import { existsSync } from "fs"
 import { Filesystem } from "../util/filesystem"
 import { Glob } from "../util/glob"
+import { Database } from "./db"
 
 export namespace JsonMigration {
   const log = Log.create({ service: "json-migration" })
@@ -23,7 +22,26 @@ export namespace JsonMigration {
     progress?: (event: Progress) => void
   }
 
-  export async function run(sqlite: Database, options?: Options) {
+  type Drizzle = {
+    run: (sql: string) => unknown
+    insert: (table: unknown) => {
+      values: (values: unknown) => {
+        onConflictDoNothing: () => {
+          run: () => unknown
+        }
+      }
+    }
+  }
+
+  export async function run(input?: unknown, next?: Options) {
+    const options = (() => {
+      if (next) return next
+      if (!input || typeof input !== "object") return undefined
+      if (!("progress" in input)) return undefined
+      const value = input.progress
+      if (value !== undefined && typeof value !== "function") return undefined
+      return input as Options
+    })()
     const storageDir = path.join(Global.Path.data, "storage")
 
     if (!existsSync(storageDir)) {
@@ -43,13 +61,36 @@ export namespace JsonMigration {
     log.info("starting json to sqlite migration", { storageDir })
     const start = performance.now()
 
-    const db = drizzle({ client: sqlite })
+    const db = await (async () => {
+      const local = Database.Client()
+      const fallback = local as unknown as Drizzle
+      if (!input || typeof input !== "object") return fallback
+      if (!("exec" in input) || typeof input.exec !== "function") return fallback
+
+      const sqlite = input as {
+        exec: (sql: string) => unknown
+        query?: (sql: string) => unknown
+        prepare?: (sql: string) => unknown
+      }
+
+      if (typeof sqlite.query === "function") {
+        const mod = await import("drizzle-orm/bun-sqlite")
+        return mod.drizzle({ client: sqlite as never }) as unknown as Drizzle
+      }
+
+      if (typeof sqlite.prepare === "function") {
+        const mod = await import("drizzle-orm/node-sqlite")
+        return mod.drizzle({ client: sqlite as never }) as unknown as Drizzle
+      }
+
+      return fallback
+    })()
 
     // Optimize SQLite for bulk inserts
-    sqlite.exec("PRAGMA journal_mode = WAL")
-    sqlite.exec("PRAGMA synchronous = OFF")
-    sqlite.exec("PRAGMA cache_size = 10000")
-    sqlite.exec("PRAGMA temp_store = MEMORY")
+    db.run("PRAGMA journal_mode = WAL")
+    db.run("PRAGMA synchronous = OFF")
+    db.run("PRAGMA cache_size = 10000")
+    db.run("PRAGMA temp_store = MEMORY")
     const stats = {
       projects: 0,
       sessions: 0,
@@ -146,7 +187,7 @@ export namespace JsonMigration {
 
     progress?.({ current, total, label: "starting" })
 
-    sqlite.exec("BEGIN TRANSACTION")
+    db.run("BEGIN TRANSACTION")
 
     // Migrate projects first (no FK deps)
     // Derive all IDs from file paths, not JSON content
@@ -400,7 +441,7 @@ export namespace JsonMigration {
       log.warn("skipped orphaned session shares", { count: orphans.shares })
     }
 
-    sqlite.exec("COMMIT")
+    db.run("COMMIT")
 
     log.info("json migration complete", {
       projects: stats.projects,

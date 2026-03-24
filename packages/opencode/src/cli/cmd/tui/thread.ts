@@ -9,6 +9,7 @@ import { Log } from "@/util/log"
 import { withTimeout } from "@/util/timeout"
 import { withNetworkOptions, resolveNetworkOptions } from "@/cli/network"
 import { Filesystem } from "@/util/filesystem"
+import { Worker as NodeWorker } from "node:worker_threads"
 import type { Event } from "@opencode-ai/sdk/v2"
 import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
@@ -20,6 +21,29 @@ declare global {
 }
 
 type RpcClient = ReturnType<typeof Rpc.client<typeof rpc>>
+
+type RpcTarget = {
+  postMessage: (data: string) => void | null
+  onmessage: ((this: Worker, ev: MessageEvent<any>) => any) | null
+}
+
+function bridge(worker: Worker | NodeWorker): RpcTarget {
+  if ("onmessage" in worker) {
+    return worker as RpcTarget
+  }
+
+  const target: RpcTarget = {
+    postMessage: (data) => worker.postMessage(data),
+    onmessage: null,
+  }
+
+  worker.on("message", (data) => {
+    const text = typeof data === "string" ? data : JSON.stringify(data)
+    target.onmessage?.call(undefined as unknown as Worker, { data: text } as MessageEvent<any>)
+  })
+
+  return target
+}
 
 function createWorkerFetch(client: RpcClient): typeof fetch {
   const fn = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -55,8 +79,17 @@ async function target() {
   return new URL("./worker.ts", import.meta.url)
 }
 
+async function stdin() {
+  if (process.stdin.isTTY) return undefined
+  const list: Buffer[] = []
+  for await (const chunk of process.stdin) {
+    list.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
+  }
+  return Buffer.concat(list).toString("utf8")
+}
+
 async function input(value?: string) {
-  const piped = process.stdin.isTTY ? undefined : await Bun.stdin.text()
+  const piped = await stdin()
   if (!value) return piped
   if (!piped) return value
   return piped + "\n" + value
@@ -128,16 +161,29 @@ export const TuiThreadCommand = cmd({
       }
       const cwd = Filesystem.resolve(process.cwd())
 
-      const worker = new Worker(file, {
-        env: Object.fromEntries(
-          Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
-        ),
-      })
-      worker.onerror = (e) => {
-        Log.Default.error(e)
+      const worker =
+        typeof Worker === "function"
+          ? new Worker(file, {
+              env: Object.fromEntries(
+                Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+              ),
+            })
+          : new NodeWorker(file, {
+              env: Object.fromEntries(
+                Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+              ),
+            })
+      if ("onerror" in worker) {
+        worker.onerror = (e) => {
+          Log.Default.error(e)
+        }
+      } else {
+        worker.on("error", (e) => {
+          Log.Default.error(e)
+        })
       }
 
-      const client = Rpc.client<typeof rpc>(worker)
+      const client = Rpc.client<typeof rpc>(bridge(worker))
       const error = (e: unknown) => {
         Log.Default.error(e)
       }

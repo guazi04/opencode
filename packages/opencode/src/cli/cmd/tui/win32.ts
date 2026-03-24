@@ -1,22 +1,39 @@
-import { dlopen, ptr } from "bun:ffi"
-
 const STD_INPUT_HANDLE = -10
 const ENABLE_PROCESSED_INPUT = 0x0001
 
-const kernel = () =>
-  dlopen("kernel32.dll", {
-    GetStdHandle: { args: ["i32"], returns: "ptr" },
-    GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
-    SetConsoleMode: { args: ["ptr", "u32"], returns: "i32" },
-    FlushConsoleInputBuffer: { args: ["ptr"], returns: "i32" },
-  })
+type K32 = {
+  symbols: {
+    GetStdHandle: (id: number) => number
+    GetConsoleMode: (handle: number, mode: number) => number
+    SetConsoleMode: (handle: number, mode: number) => number
+    FlushConsoleInputBuffer: (handle: number) => number
+  }
+}
 
-let k32: ReturnType<typeof kernel> | undefined
+type BunFfi = {
+  dlopen: (name: string, symbols: Record<string, { args: string[]; returns: string }>) => K32
+  ptr: (input: ArrayBufferView) => number
+}
+
+const symbols = {
+  GetStdHandle: { args: ["i32"], returns: "ptr" },
+  GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+  SetConsoleMode: { args: ["ptr", "u32"], returns: "i32" },
+  FlushConsoleInputBuffer: { args: ["ptr"], returns: "i32" },
+}
+
+const kernel = (bun: BunFfi) => bun.dlopen("kernel32.dll", symbols)
+
+let k32: K32 | undefined
+let p: BunFfi["ptr"] | undefined
 
 function load() {
   if (process.platform !== "win32") return false
   try {
-    k32 ??= kernel()
+    const bun = (globalThis as { Bun?: Partial<BunFfi> }).Bun
+    if (!bun || typeof bun.dlopen !== "function" || typeof bun.ptr !== "function") return false
+    k32 ??= kernel(bun as BunFfi)
+    p = bun.ptr
     return true
   } catch {
     return false
@@ -30,6 +47,8 @@ export function win32DisableProcessedInput() {
   if (process.platform !== "win32") return
   if (!process.stdin.isTTY) return
   if (!load()) return
+  if (!p) return
+  const ptr = p
 
   const handle = k32!.symbols.GetStdHandle(STD_INPUT_HANDLE)
   const buf = new Uint32Array(1)
@@ -47,6 +66,7 @@ export function win32FlushInputBuffer() {
   if (process.platform !== "win32") return
   if (!process.stdin.isTTY) return
   if (!load()) return
+  if (!p) return
 
   const handle = k32!.symbols.GetStdHandle(STD_INPUT_HANDLE)
   k32!.symbols.FlushConsoleInputBuffer(handle)
@@ -69,9 +89,11 @@ export function win32InstallCtrlCGuard() {
   if (process.platform !== "win32") return
   if (!process.stdin.isTTY) return
   if (!load()) return
+  if (!p) return
+  const ptr = p
   if (unhook) return unhook
 
-  const stdin = process.stdin as any
+  const stdin = process.stdin
   const original = stdin.setRawMode
 
   const handle = k32!.symbols.GetStdHandle(STD_INPUT_HANDLE)
@@ -93,7 +115,7 @@ export function win32InstallCtrlCGuard() {
     setImmediate(enforce)
   }
 
-  let wrapped: ((mode: boolean) => unknown) | undefined
+  let wrapped: typeof stdin.setRawMode | undefined
 
   if (typeof original === "function") {
     wrapped = (mode: boolean) => {
