@@ -71,7 +71,7 @@ export namespace Installation {
   }
 
   export function isLocal() {
-    return CHANNEL === "local"
+    return CHANNEL === "local" || VERSION === "local"
   }
 
   export class UpgradeFailedError extends Schema.TaggedErrorClass<UpgradeFailedError>()("UpgradeFailedError", {

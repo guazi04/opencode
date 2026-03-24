@@ -218,6 +218,15 @@ function normalizePath(input?: string) {
   return input
 }
 
+async function stdin() {
+  if (process.stdin.isTTY) return ""
+  const list: Buffer[] = []
+  for await (const chunk of process.stdin) {
+    list.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
+  }
+  return Buffer.concat(list).toString("utf8")
+}
+
 export const RunCommand = cmd({
   command: "run [message..]",
   describe: "run opencode with a message",
@@ -342,7 +351,7 @@ export const RunCommand = cmd({
       }
     }
 
-    if (!process.stdin.isTTY) message += "\n" + (await Bun.stdin.text())
+    if (!process.stdin.isTTY) message += "\n" + (await stdin())
 
     if (message.trim().length === 0 && !args.command) {
       UI.error("You must provide a message or a command")

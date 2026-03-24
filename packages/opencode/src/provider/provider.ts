@@ -54,7 +54,7 @@ import { ModelID, ProviderID } from "./schema"
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
-  const DEFAULT_CHUNK_TIMEOUT = 300_000
+  const DEFAULT_CHUNK_TIMEOUT: number | false = false
 
   function shouldUseCopilotResponsesApi(modelID: string): boolean {
     const match = /^gpt-(\d+)/.exec(modelID)

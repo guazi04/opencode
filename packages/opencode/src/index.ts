@@ -33,7 +33,6 @@ import { DbCommand } from "./cli/cmd/db"
 import path from "path"
 import { Global } from "./global"
 import { JsonMigration } from "./storage/json-migration"
-import { Database } from "./storage/db"
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -95,8 +94,8 @@ let cli = yargs(hideBin(process.argv))
       let last = -1
       if (tty) process.stderr.write("\x1b[?25l")
       try {
-        await JsonMigration.run(Database.Client().$client, {
-          progress: (event) => {
+        await JsonMigration.run(undefined, {
+          progress: (event: JsonMigration.Progress) => {
             const percent = Math.floor((event.current / event.total) * 100)
             if (percent === last && event.current !== event.total) return
             last = percent
@@ -185,15 +184,17 @@ try {
     })
   }
 
-  if (e instanceof ResolveMessage) {
+  const resolve = (globalThis as { ResolveMessage?: new (...input: unknown[]) => Error }).ResolveMessage
+  if (resolve && e instanceof resolve) {
+    const item = e as Error & Record<string, unknown>
     Object.assign(data, {
       name: e.name,
       message: e.message,
-      code: e.code,
-      specifier: e.specifier,
-      referrer: e.referrer,
-      position: e.position,
-      importKind: e.importKind,
+      code: item.code,
+      specifier: item.specifier,
+      referrer: item.referrer,
+      position: item.position,
+      importKind: item.importKind,
     })
   }
   Log.Default.error("fatal", data)
