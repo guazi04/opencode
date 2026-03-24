@@ -1,0 +1,17 @@
+# .gitlab-ci.yml - opencode
+# CI: typecheck for packages/opencode only
+
+stages:
+  - check
+
+typecheck:
+  image: registry.intsig.net/nlp/node:22-slim-ci
+  stage: check
+  script:
+    - bun install --ignore-scripts
+    - cd packages/opencode
+    - echo "🔍 Running typecheck..."
+    - bun typecheck
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
