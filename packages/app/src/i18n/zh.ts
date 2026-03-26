@@ -374,6 +374,8 @@ export const dict = {
   "context.breakdown.tool": "工具调用",
   "context.breakdown.other": "其他",
   "context.systemPrompt.title": "系统提示词",
+  "context.agentPrompt.title": "Agent 系统提示词",
+  "context.systemContext.title": "系统上下文",
   "context.rawMessages.title": "原始消息",
   "context.stats.session": "会话",
   "context.stats.messages": "消息数",

@@ -158,6 +158,15 @@ export function SessionContextTab() {
     return trimmed
   })
 
+  const systemContext = createMemo(() => {
+    const msg = findLast(visibleUserMessages(), (m) => !!m.system_context)
+    const ctx = msg?.system_context
+    if (!ctx) return
+    const trimmed = ctx.trim()
+    if (!trimmed) return
+    return trimmed
+  })
+
   const providerLabel = createMemo(() => {
     const c = ctx()
     if (!c) return "—"
@@ -315,9 +324,20 @@ export function SessionContextTab() {
         <Show when={systemPrompt()}>
           {(prompt) => (
             <div class="flex flex-col gap-2">
-              <div class="text-12-regular text-text-weak">{language.t("context.systemPrompt.title")}</div>
+              <div class="text-12-regular text-text-weak">{language.t("context.agentPrompt.title")}</div>
               <div class="border border-border-base rounded-md bg-surface-base px-3 py-2">
                 <Markdown text={prompt()} class="text-12-regular" />
+              </div>
+            </div>
+          )}
+        </Show>
+
+        <Show when={systemContext()}>
+          {(ctx) => (
+            <div class="flex flex-col gap-2">
+              <div class="text-12-regular text-text-weak">{language.t("context.systemContext.title")}</div>
+              <div class="border border-border-base rounded-md bg-surface-base px-3 py-2">
+                <Markdown text={ctx()} class="text-12-regular" />
               </div>
             </div>
           )}

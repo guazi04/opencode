@@ -356,6 +356,8 @@ export const dict = {
   "context.breakdown.other": "其他",
 
   "context.systemPrompt.title": "系統提示詞",
+  "context.agentPrompt.title": "Agent System Prompt",
+  "context.systemContext.title": "System Context",
   "context.rawMessages.title": "原始訊息",
 
   "context.stats.session": "工作階段",

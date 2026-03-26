@@ -375,6 +375,7 @@ export namespace MessageV2 {
       modelID: ModelID.zod,
     }),
     system: z.string().optional(),
+    system_context: z.string().optional(),
     tools: z.record(z.string(), z.boolean()).optional(),
     variant: z.string().optional(),
   }).meta({

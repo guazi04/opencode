@@ -676,11 +676,16 @@ export namespace SessionPrompt {
 
       // Build system prompt, adding structured output instruction if needed
       const skills = await SystemPrompt.skills(agent)
-      const system = [
-        ...(await SystemPrompt.environment(model)),
-        ...(skills ? [skills] : []),
-        ...(await InstructionPrompt.system()),
-      ]
+      const env = await SystemPrompt.environment(model)
+      const inst = await InstructionPrompt.system()
+      const system = [...env, ...(skills ? [skills] : []), ...inst]
+      const context = system.join("\n")
+      if (lastUser.system_context !== context) {
+        await Session.updateMessage({
+          ...lastUser,
+          system_context: context,
+        })
+      }
       const format = lastUser.format ?? { type: "text" }
       if (format.type === "json_schema") {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)

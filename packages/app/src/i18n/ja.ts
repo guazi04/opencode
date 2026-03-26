@@ -327,6 +327,8 @@ export const dict = {
   "context.breakdown.tool": "ツール呼び出し",
   "context.breakdown.other": "その他",
   "context.systemPrompt.title": "システムプロンプト",
+  "context.agentPrompt.title": "エージェントシステムプロンプト",
+  "context.systemContext.title": "システムコンテキスト",
   "context.rawMessages.title": "生のメッセージ",
   "context.stats.session": "セッション",
   "context.stats.messages": "メッセージ",

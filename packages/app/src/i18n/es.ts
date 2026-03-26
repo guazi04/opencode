@@ -359,6 +359,8 @@ export const dict = {
   "context.breakdown.other": "Otro",
 
   "context.systemPrompt.title": "Prompt del Sistema",
+  "context.agentPrompt.title": "Agent System Prompt",
+  "context.systemContext.title": "System Context",
   "context.rawMessages.title": "Mensajes en bruto",
 
   "context.stats.session": "Sesión",
