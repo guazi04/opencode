@@ -1,5 +1,5 @@
 # .gitlab-ci.yml - opencode
-# CI: typecheck for packages/opencode only
+# CI: typecheck + version bump verification for MRs
 
 stages:
   - check
@@ -15,3 +15,24 @@ typecheck:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# version-check: verify MR includes a version bump (CI is read-only — no git commits).
+# Skips sync/upstream MRs where version is managed by the agent via version:sync.
+version-check:
+  image: registry.intsig.net/nlp/node:22-slim-ci
+  stage: check
+  script: |
+    if echo "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" | grep -q '^sync/upstream'; then
+      echo "Sync MR — version check skipped"
+      exit 0
+    fi
+    CURRENT=$(node -p "require('./packages/opencode/package.json').version")
+    git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    TARGET=$(git show "origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:packages/opencode/package.json" | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version")
+    if [ "$CURRENT" = "$TARGET" ]; then
+      echo "Version not bumped. Run 'bun run version:patch' in packages/opencode/ before pushing."
+      exit 1
+    fi
+    echo "Version bumped: ${TARGET} → ${CURRENT}"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
