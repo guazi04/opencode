@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "1.3.2",
+  "version": "1.3.2-intsig.1.0",
   "name": "opencode",
   "type": "module",
   "license": "MIT",
@@ -10,6 +10,10 @@
     "typecheck": "tsgo --noEmit",
     "test": "bun test --timeout 30000",
     "build": "bun run script/build.ts",
+    "version:patch": "bun run script/version.ts patch",
+    "version:minor": "bun run script/version.ts minor",
+    "version:sync": "bun run script/version.ts sync",
+    "version:current": "bun run script/version.ts current",
     "dev": "bun run --conditions=browser ./src/index.ts",
     "random": "echo 'Random script updated at $(date)' && echo 'Change queued successfully' && echo 'Another change made' && echo 'Yet another change' && echo 'One more change' && echo 'Final change' && echo 'Another final change' && echo 'Yet another final change'",
     "clean": "echo 'Cleaning up...' && rm -rf node_modules dist",

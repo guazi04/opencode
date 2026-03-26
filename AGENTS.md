@@ -156,3 +156,22 @@ const table = sqliteTable("session", {
 ### Legacy
 
 - `intsig-dev` branch: predecessor of `dev`, kept temporarily on GitLab for reference. Do NOT use for new work.
+
+## Version Management (intsig fork)
+
+This repo uses `{upstream}-intsig.N.M` version format. Version bumps are automated via project skill.
+
+- **Every MR to `dev`** must include a version bump. Run `bun run version:patch` in `packages/opencode/` before pushing.
+- **Upstream sync** MRs: `version:sync` is handled by Step 3.5 in the `sync-upstream-opencode` skill — no manual bump needed.
+- **Release tags**: run `bun run version:minor` → MR → merge → then tag.
+- Load `version-management` skill for the full workflow.
+- CI `version-check` job will fail MRs that don't include a version bump (sync branches exempted).
+
+Available scripts (run from `packages/opencode/`):
+
+| Script | Effect |
+|--------|--------|
+| `bun run version:patch` | M+1 (every MR) |
+| `bun run version:minor` | N+1, M=0 (releases) |
+| `bun run version:sync` | Update upstream base, preserve N.M |
+| `bun run version:current` | Print current version |
