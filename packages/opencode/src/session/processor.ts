@@ -147,8 +147,6 @@ export namespace SessionProcessor {
                     case "reasoning-end":
                       if (value.id in reasoningMap) {
                         const part = reasoningMap[value.id]
-                        part.text = part.text.trimEnd()
-
                         part.time = {
                           ...part.time,
                           end: Date.now(),

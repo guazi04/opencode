@@ -502,6 +502,7 @@ Track all custom patches on `dev` not present upstream. Every sync MUST verify e
 | Plugin dedup                   | `plugin/index.ts`                                                                       | Prevent duplicate plugin loading                  | LOW — additive change                                                                 |
 | Session tree + sidebar UI      | `session/index.ts`, `sidebar-items.tsx`, `sidebar-workspace.tsx`, `sidebar-project.tsx` | Parent-child session tracking + tree UI rendering | HIGH — upstream dropped child-tree props in sidebar, our callers still depend on them |
 | Truncation cascade diagnostics | `processor.ts`, `message-v2.ts`                                                         | Detailed logging for compaction issues            | HIGH — touches hot files                                                              |
+| Thinking block signature fix | `processor.ts`, `transform.ts`                                                          | Preserve thinking/redacted_thinking blocks verbatim (upstream #18254 #18078 #16748) — **DROP when upstream fixes these issues** | LOW — minimal change, upstream likely to fix same way |
 
 ---
 

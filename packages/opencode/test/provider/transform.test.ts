@@ -1080,7 +1080,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     expect(result[0].content[0]).toEqual({ type: "text", text: "Hello" })
   })
 
-  test("filters out empty reasoning parts from array content", () => {
+  test("keeps empty reasoning parts from array content", () => {
     const msgs = [
       {
         role: "assistant",
@@ -1095,11 +1095,13 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
     expect(result).toHaveLength(1)
-    expect(result[0].content).toHaveLength(1)
-    expect(result[0].content[0]).toEqual({ type: "text", text: "Answer" })
+    expect(result[0].content).toHaveLength(3)
+    expect(result[0].content[0]).toEqual({ type: "reasoning", text: "" })
+    expect(result[0].content[1]).toEqual({ type: "text", text: "Answer" })
+    expect(result[0].content[2]).toEqual({ type: "reasoning", text: "" })
   })
 
-  test("removes entire message when all parts are empty", () => {
+  test("keeps message when reasoning parts remain after text filtering", () => {
     const msgs = [
       { role: "user", content: "Hello" },
       {
@@ -1114,9 +1116,10 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
-    expect(result).toHaveLength(2)
+    expect(result).toHaveLength(3)
     expect(result[0].content).toBe("Hello")
-    expect(result[1].content).toBe("World")
+    expect(result[1].content).toEqual([{ type: "reasoning", text: "" }])
+    expect(result[2].content).toBe("World")
   })
 
   test("keeps non-text/reasoning parts even if text parts are empty", () => {
