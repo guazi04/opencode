@@ -360,6 +360,8 @@ export const dict = {
   "context.breakdown.other": "Annet",
 
   "context.systemPrompt.title": "Systemprompt",
+  "context.agentPrompt.title": "Agent System Prompt",
+  "context.systemContext.title": "System Context",
   "context.rawMessages.title": "Rå meldinger",
 
   "context.stats.session": "Sesjon",

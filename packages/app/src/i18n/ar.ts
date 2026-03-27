@@ -327,6 +327,8 @@ export const dict = {
   "context.breakdown.tool": "استدعاءات الأداة",
   "context.breakdown.other": "أخرى",
   "context.systemPrompt.title": "موجه النظام",
+  "context.agentPrompt.title": "Agent System Prompt",
+  "context.systemContext.title": "System Context",
   "context.rawMessages.title": "الرسائل الخام",
   "context.stats.session": "جلسة",
   "context.stats.messages": "رسائل",

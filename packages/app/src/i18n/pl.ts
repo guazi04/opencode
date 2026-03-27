@@ -328,6 +328,8 @@ export const dict = {
   "context.breakdown.tool": "Wywołania narzędzi",
   "context.breakdown.other": "Inne",
   "context.systemPrompt.title": "Prompt systemowy",
+  "context.agentPrompt.title": "Agent System Prompt",
+  "context.systemContext.title": "System Context",
   "context.rawMessages.title": "Surowe wiadomości",
   "context.stats.session": "Sesja",
   "context.stats.messages": "Wiadomości",

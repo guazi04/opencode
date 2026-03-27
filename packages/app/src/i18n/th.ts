@@ -357,6 +357,8 @@ export const dict = {
   "context.breakdown.other": "อื่น ๆ",
 
   "context.systemPrompt.title": "พร้อมท์ระบบ",
+  "context.agentPrompt.title": "Agent System Prompt",
+  "context.systemContext.title": "System Context",
   "context.rawMessages.title": "ข้อความดิบ",
 
   "context.stats.session": "เซสชัน",

@@ -335,6 +335,8 @@ export const dict = {
   "context.breakdown.tool": "Werkzeugaufrufe",
   "context.breakdown.other": "Andere",
   "context.systemPrompt.title": "System-Prompt",
+  "context.agentPrompt.title": "Agent System Prompt",
+  "context.systemContext.title": "System Context",
   "context.rawMessages.title": "Rohdaten der Nachrichten",
   "context.stats.session": "Sitzung",
   "context.stats.messages": "Nachrichten",

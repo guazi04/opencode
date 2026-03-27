@@ -362,6 +362,8 @@ export const dict = {
   "context.breakdown.other": "Diğer",
 
   "context.systemPrompt.title": "Sistem Komutu",
+  "context.agentPrompt.title": "Agent System Prompt",
+  "context.systemContext.title": "System Context",
   "context.rawMessages.title": "Ham mesajlar",
 
   "context.stats.session": "Oturum",

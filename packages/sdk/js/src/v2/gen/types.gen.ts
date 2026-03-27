@@ -134,6 +134,7 @@ export type UserMessage = {
     modelID: string
   }
   system?: string
+  system_context?: string
   tools?: {
     [key: string]: boolean
   }

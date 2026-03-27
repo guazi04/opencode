@@ -330,6 +330,8 @@ export const dict = {
   "context.breakdown.tool": "도구 호출",
   "context.breakdown.other": "기타",
   "context.systemPrompt.title": "시스템 프롬프트",
+  "context.agentPrompt.title": "Agent System Prompt",
+  "context.systemContext.title": "System Context",
   "context.rawMessages.title": "원시 메시지",
   "context.stats.session": "세션",
   "context.stats.messages": "메시지",
