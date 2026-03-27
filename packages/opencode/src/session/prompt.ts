@@ -774,7 +774,7 @@ export namespace SessionPrompt {
       }
       const context = system.join("\n")
       const segments = [...system]
-      const toolContext = toolSummary(tools)
+      const toolContext = toolSummary(LLM.filterTools({ tools: { ...tools }, agent, permission: session.permission, user: lastUser }))
       if (
         lastUser.system_context !== context ||
         !sameText(lastUser.system_segments, segments) ||
