@@ -115,6 +115,12 @@ export type FileDiff = {
   status?: "added" | "deleted" | "modified"
 }
 
+export type ToolContext = {
+  id: string
+  description?: string
+  schema?: string
+}
+
 export type UserMessage = {
   id: string
   sessionID: string
@@ -135,9 +141,11 @@ export type UserMessage = {
   }
   system?: string
   system_context?: string
+  system_segments?: Array<string>
   tools?: {
     [key: string]: boolean
   }
+  tool_context?: Array<ToolContext>
   variant?: string
 }
 

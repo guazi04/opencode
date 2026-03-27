@@ -356,6 +356,17 @@ export namespace MessageV2 {
     sessionID: SessionID.zod,
   })
 
+  export const ToolContext = z
+    .object({
+      id: z.string(),
+      description: z.string().optional(),
+      schema: z.string().optional(),
+    })
+    .meta({
+      ref: "ToolContext",
+    })
+  export type ToolContext = z.infer<typeof ToolContext>
+
   export const User = Base.extend({
     role: z.literal("user"),
     time: z.object({
@@ -376,7 +387,9 @@ export namespace MessageV2 {
     }),
     system: z.string().optional(),
     system_context: z.string().optional(),
+    system_segments: z.array(z.string()).optional(),
     tools: z.record(z.string(), z.boolean()).optional(),
+    tool_context: z.array(ToolContext).optional(),
     variant: z.string().optional(),
   }).meta({
     ref: "UserMessage",

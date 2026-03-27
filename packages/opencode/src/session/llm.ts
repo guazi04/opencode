@@ -306,17 +306,22 @@ export namespace LLM {
     })
   }
 
-  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
+  export function filterTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
+    const tools = { ...input.tools }
     const disabled = Permission.disabled(
-      Object.keys(input.tools),
+      Object.keys(tools),
       Permission.merge(input.agent.permission, input.permission ?? []),
     )
-    for (const tool of Object.keys(input.tools)) {
+    for (const tool of Object.keys(tools)) {
       if (input.user.tools?.[tool] === false || disabled.has(tool)) {
-        delete input.tools[tool]
+        delete tools[tool]
       }
     }
-    return input.tools
+    return tools
+  }
+
+  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
+    return filterTools(input)
   }
 
   // Check if messages contain any tool-call content

@@ -63,6 +63,87 @@ IMPORTANT:
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 
+const TOOL_DESC_MAX = 240
+const TOOL_SCHEMA_MAX = 280
+const TOOL_PROP_MAX = 8
+const TOOL_REQUIRED_MAX = 6
+
+const isObj = (input: unknown): input is Record<string, unknown> => typeof input === "object" && input !== null
+
+const clip = (input: string, max: number) => {
+  const text = input.replace(/\s+/g, " ").trim()
+  if (text.length <= max) return text
+  return text.slice(0, max - 1).trimEnd() + "…"
+}
+
+const schemaObj = (input: unknown) => {
+  if (!isObj(input)) return
+  if (isObj(input.jsonSchema)) return input.jsonSchema
+  return input
+}
+
+const schemaType = (input: unknown) => {
+  if (!isObj(input)) return "unknown"
+  if (typeof input.type === "string") return input.type
+  if (Array.isArray(input.type)) {
+    const types = input.type.filter((item): item is string => typeof item === "string")
+    if (types.length) return types.join("|")
+  }
+  if (Array.isArray(input.anyOf)) return "anyOf"
+  if (Array.isArray(input.oneOf)) return "oneOf"
+  if (Array.isArray(input.enum)) return "enum"
+  return "unknown"
+}
+
+const schemaSummary = (input: unknown) => {
+  const schema = schemaObj(input)
+  if (!schema) return
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((item): item is string => typeof item === "string")
+    : []
+  const props = isObj(schema.properties)
+    ? Object.entries(schema.properties)
+        .slice(0, TOOL_PROP_MAX)
+        .map(([id, val]) => `${id}:${schemaType(val)}`)
+    : []
+  const parts = [schemaType(schema)]
+  if (required.length) parts.push(`required(${required.slice(0, TOOL_REQUIRED_MAX).join(", ")})`)
+  if (props.length) parts.push(`props(${props.join(", ")})`)
+  return clip(parts.join(" • "), TOOL_SCHEMA_MAX)
+}
+
+const toolSummary = (input: Record<string, AITool>) =>
+  Object.entries(input)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, tool]) => {
+      const description =
+        typeof tool.description === "string" && tool.description.trim().length > 0
+          ? clip(tool.description, TOOL_DESC_MAX)
+          : undefined
+      const schema = schemaSummary(tool.inputSchema)
+      return {
+        id,
+        ...(description ? { description } : {}),
+        ...(schema ? { schema } : {}),
+      }
+    })
+
+const sameText = (a?: string[], b?: string[]) => {
+  if (!a && !b) return true
+  if (!a || !b) return false
+  if (a.length !== b.length) return false
+  return a.every((item, idx) => item === b[idx])
+}
+
+const sameTools = (a?: MessageV2.ToolContext[], b?: MessageV2.ToolContext[]) => {
+  if (!a && !b) return true
+  if (!a || !b) return false
+  if (a.length !== b.length) return false
+  return a.every(
+    (item, idx) => item.id === b[idx].id && item.description === b[idx].description && item.schema === b[idx].schema,
+  )
+}
+
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
 
@@ -565,6 +646,13 @@ export namespace SessionPrompt {
           sessionID,
           agent: lastUser.agent,
           model: lastUser.model,
+          format: lastUser.format,
+          tools: lastUser.tools,
+          system: lastUser.system,
+          system_context: lastUser.system_context,
+          system_segments: lastUser.system_segments,
+          tool_context: lastUser.tool_context,
+          variant: lastUser.variant,
           auto: true,
         })
         continue
@@ -636,10 +724,12 @@ export namespace SessionPrompt {
         messages: msgs,
       })
 
+      const format = lastUser.format ?? { type: "text" }
+
       // Inject StructuredOutput tool if JSON schema mode enabled
-      if (lastUser.format?.type === "json_schema") {
+      if (format.type === "json_schema") {
         tools["StructuredOutput"] = createStructuredOutputTool({
-          schema: lastUser.format.schema,
+          schema: format.schema,
           onSuccess(output) {
             structuredOutput = output
           },
@@ -679,16 +769,24 @@ export namespace SessionPrompt {
       const env = await SystemPrompt.environment(model)
       const inst = await InstructionPrompt.system()
       const system = [...env, ...(skills ? [skills] : []), ...inst]
-      const context = system.join("\n")
-      if (lastUser.system_context !== context) {
-        await Session.updateMessage({
-          ...lastUser,
-          system_context: context,
-        })
-      }
-      const format = lastUser.format ?? { type: "text" }
       if (format.type === "json_schema") {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+      }
+      const context = system.join("\n")
+      const segments = [...system]
+      const toolContext = toolSummary(tools)
+      if (
+        lastUser.system_context !== context ||
+        !sameText(lastUser.system_segments, segments) ||
+        !sameTools(lastUser.tool_context, toolContext)
+      ) {
+        const next = await Session.updateMessage({
+          ...lastUser,
+          system_context: context,
+          system_segments: segments,
+          tool_context: toolContext,
+        })
+        if (next.role === "user") lastUser = next
       }
 
       const result = await processor.process({
@@ -767,6 +865,13 @@ export namespace SessionPrompt {
           sessionID,
           agent: lastUser.agent,
           model: lastUser.model,
+          format: lastUser.format,
+          tools: lastUser.tools,
+          system: lastUser.system,
+          system_context: lastUser.system_context,
+          system_segments: lastUser.system_segments,
+          tool_context: lastUser.tool_context,
+          variant: lastUser.variant,
           auto: true,
           overflow: !processor.message.finish,
         })
