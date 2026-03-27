@@ -253,6 +253,9 @@ When constructing the summary, try to stick to this template:
           format: original.format,
           tools: original.tools,
           system: original.system,
+          system_context: original.system_context,
+          system_segments: original.system_segments,
+          tool_context: original.tool_context,
           variant: original.variant,
         })
         for (const part of replay.parts) {
@@ -279,6 +282,9 @@ When constructing the summary, try to stick to this template:
           format: userMessage.format,
           tools: userMessage.tools,
           system: userMessage.system,
+          system_context: userMessage.system_context,
+          system_segments: userMessage.system_segments,
+          tool_context: userMessage.tool_context,
           variant: userMessage.variant,
         })
         const text =
@@ -328,6 +334,13 @@ When constructing the summary, try to stick to this template:
         providerID: ProviderID.zod,
         modelID: ModelID.zod,
       }),
+      format: MessageV2.Format.optional(),
+      tools: z.record(z.string(), z.boolean()).optional(),
+      system: z.string().optional(),
+      system_context: z.string().optional(),
+      system_segments: z.array(z.string()).optional(),
+      tool_context: z.array(MessageV2.ToolContext).optional(),
+      variant: z.string().optional(),
       auto: z.boolean(),
       overflow: z.boolean().optional(),
     }),
@@ -338,6 +351,13 @@ When constructing the summary, try to stick to this template:
         model: input.model,
         sessionID: input.sessionID,
         agent: input.agent,
+        format: input.format,
+        tools: input.tools,
+        system: input.system,
+        system_context: input.system_context,
+        system_segments: input.system_segments,
+        tool_context: input.tool_context,
+        variant: input.variant,
         time: {
           created: Date.now(),
         },

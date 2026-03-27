@@ -167,6 +167,22 @@ export function SessionContextTab() {
     return trimmed
   })
 
+  const systemSegments = createMemo(() => {
+    const msg = findLast(visibleUserMessages(), (m) => !!m.system_segments?.length)
+    const segments = msg?.system_segments
+    if (!segments?.length) return
+    const cleaned = segments.map((segment) => segment.trim()).filter((segment) => segment.length > 0)
+    if (!cleaned.length) return
+    return cleaned
+  })
+
+  const toolContext = createMemo(() => {
+    const msg = findLast(visibleUserMessages(), (m) => !!m.tool_context?.length)
+    const tools = msg?.tool_context
+    if (!tools?.length) return
+    return tools
+  })
+
   const providerLabel = createMemo(() => {
     const c = ctx()
     if (!c) return "—"
@@ -336,9 +352,88 @@ export function SessionContextTab() {
           {(ctx) => (
             <div class="flex flex-col gap-2">
               <div class="text-12-regular text-text-weak">{language.t("context.systemContext.title")}</div>
-              <div class="border border-border-base rounded-md bg-surface-base px-3 py-2">
-                <Markdown text={ctx()} class="text-12-regular" />
+              <Show
+                when={systemSegments()}
+                fallback={
+                  <div class="border border-border-base rounded-md bg-surface-base px-3 py-2">
+                    <Markdown text={ctx()} class="text-12-regular" />
+                  </div>
+                }
+              >
+                {(segments) => (
+                  <Accordion multiple>
+                    <For each={segments()}>
+                      {(segment, idx) => (
+                        <Accordion.Item value={`system-${idx()}`}>
+                          <Accordion.Trigger>
+                            <div class="flex items-center justify-between gap-2 w-full">
+                              <div class="min-w-0 truncate text-12-medium text-text-strong">
+                                {language.t("context.systemContext.segment")} {idx() + 1}
+                              </div>
+                              <Icon name="chevron-grabber-vertical" size="small" class="shrink-0 text-text-weak" />
+                            </div>
+                          </Accordion.Trigger>
+                          <Accordion.Content>
+                            <div class="border border-border-base rounded-md bg-surface-base px-3 py-2 mt-2">
+                              <Markdown text={segment} class="text-12-regular" />
+                            </div>
+                          </Accordion.Content>
+                        </Accordion.Item>
+                      )}
+                    </For>
+                  </Accordion>
+                )}
+              </Show>
+            </div>
+          )}
+        </Show>
+
+        <Show when={toolContext()}>
+          {(tools) => (
+            <div class="flex flex-col gap-2">
+              <div class="text-12-regular text-text-weak">
+                {language.t("context.tools.title")} ({tools().length})
               </div>
+              <Accordion multiple>
+                <For each={tools()}>
+                  {(item) => (
+                    <Accordion.Item value={`tool-${item.id}`}>
+                      <Accordion.Trigger>
+                        <div class="flex items-center justify-between gap-2 w-full">
+                          <div class="min-w-0 truncate text-12-medium text-text-strong">{item.id}</div>
+                          <Icon name="chevron-grabber-vertical" size="small" class="shrink-0 text-text-weak" />
+                        </div>
+                      </Accordion.Trigger>
+                      <Accordion.Content>
+                        <div class="flex flex-col gap-2 border border-border-base rounded-md bg-surface-base px-3 py-2 mt-2">
+                          <Show when={item.description}>
+                            {(description) => (
+                              <div class="flex flex-col gap-1">
+                                <div class="text-11-regular text-text-weaker">
+                                  {language.t("context.tools.description")}
+                                </div>
+                                <div class="text-12-regular text-text-strong whitespace-pre-wrap break-words">
+                                  {description()}
+                                </div>
+                              </div>
+                            )}
+                          </Show>
+                          <Show when={item.schema}>
+                            {(schema) => (
+                              <div class="flex flex-col gap-1">
+                                <div class="text-11-regular text-text-weaker">{language.t("context.tools.schema")}</div>
+                                <div class="text-12-regular text-text-strong whitespace-pre-wrap break-words">
+                                  {schema()}
+                                </div>
+                              </div>
+                            )}
+                          </Show>
+                        </div>
+                      </Accordion.Content>
+                    </Accordion.Item>
+                  )}
+                </For>
+              </Accordion>
             </div>
           )}
         </Show>

@@ -96,6 +96,15 @@ describe("session.compaction restore", () => {
             format: { type: "text" },
             tools: { bash: true, read: false },
             system: "Main session system prompt",
+            system_context: "env\nagent\ninstruction",
+            system_segments: ["env", "agent", "instruction"],
+            tool_context: [
+              {
+                id: "bash",
+                description: "Run shell commands",
+                schema: "object • props(command:string)",
+              },
+            ],
             variant: "high",
           })
           if (msg.role !== "user") {
@@ -108,9 +117,28 @@ describe("session.compaction restore", () => {
             type: "text",
             text: "Please continue",
           })
+          await SessionCompaction.create({
+            sessionID: session.id,
+            agent: msg.agent,
+            model: msg.model,
+            format: msg.format,
+            tools: msg.tools,
+            system: msg.system,
+            system_context: msg.system_context,
+            system_segments: msg.system_segments,
+            tool_context: msg.tool_context,
+            variant: msg.variant,
+            auto: true,
+          })
           const list = await Session.messages({ sessionID: session.id })
+          const marker = list.findLast(
+            (x) => x.info.role === "user" && x.parts.some((part) => part.type === "compaction"),
+          )
+          if (!marker) {
+            throw new Error("expected compaction marker user message")
+          }
           const result = await SessionCompaction.process({
-            parentID: msg.id,
+            parentID: marker.info.id,
             messages: list,
             sessionID: session.id,
             abort: new AbortController().signal,
@@ -119,7 +147,7 @@ describe("session.compaction restore", () => {
           expect(result).toBe("continue")
 
           const msgs = await Session.messages({ sessionID: session.id })
-          const next = msgs.findLast((x) => x.info.role === "user" && x.info.id > msg.id)
+          const next = msgs.findLast((x) => x.info.role === "user" && x.info.id > marker.info.id)
           if (!next) {
             throw new Error("expected synthetic continue user message")
           }
@@ -131,6 +159,9 @@ describe("session.compaction restore", () => {
           expect(next.info.format).toEqual(msg.format)
           expect(next.info.tools).toEqual(msg.tools)
           expect(next.info.system).toBe(msg.system)
+          expect(next.info.system_context).toBe(msg.system_context)
+          expect(next.info.system_segments).toEqual(msg.system_segments)
+          expect(next.info.tool_context).toEqual(msg.tool_context)
           expect(next.info.variant).toBe(msg.variant)
 
           const text = next.parts.find((x) => x.type === "text")

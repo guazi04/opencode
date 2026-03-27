@@ -372,8 +372,12 @@ export const dict = {
   "context.breakdown.other": "Other",
 
   "context.systemPrompt.title": "System Prompt",
-  "context.agentPrompt.title": "Agent System Prompt",
+  "context.agentPrompt.title": "Agent Prompt",
   "context.systemContext.title": "System Context",
+  "context.systemContext.segment": "Segment",
+  "context.tools.title": "Tools",
+  "context.tools.description": "Description",
+  "context.tools.schema": "Parameter Schema",
   "context.rawMessages.title": "Raw messages",
 
   "context.stats.session": "Session",
