@@ -1,9 +1,14 @@
 import { describe, expect, mock, spyOn, test } from "bun:test"
+import { Effect, Layer, ManagedRuntime } from "effect"
+import { Bus } from "../../src/bus"
+import { Config } from "../../src/config/config"
 import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
+import { Plugin } from "../../src/plugin"
 import { Provider } from "../../src/provider/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
+import { SessionCompaction } from "../../src/session/compaction"
 import { SessionProcessor } from "../../src/session/processor"
 import { MessageID, PartID } from "../../src/session/schema"
 import { tmpdir } from "../fixture/fixture"
@@ -47,24 +52,43 @@ const model: Provider.Model = {
 
 describe("session.compaction restore", () => {
   test("restores user agent configuration on synthetic continue after compaction", async () => {
-    spyOn(SessionProcessor, "create").mockImplementation((input: Parameters<typeof SessionProcessor.create>[0]) => ({
-      message: input.assistantMessage,
-      nearMax: false,
-      partFromToolCall: (callID: string) => ({
-        id: PartID.ascending(),
-        messageID: input.assistantMessage.id,
-        sessionID: input.assistantMessage.sessionID,
-        type: "tool",
-        callID,
-        tool: "mock",
-        state: {
-          status: "pending",
-          input: {},
-          raw: "",
-        },
+    const layer = Layer.succeed(
+      SessionProcessor.Service,
+      SessionProcessor.Service.of({
+        create: Effect.fn("TestSessionProcessor.create")((input) =>
+          Effect.succeed({
+            message: input.assistantMessage,
+            nearMax: false,
+            partFromToolCall: (callID: string) => ({
+              id: PartID.ascending(),
+              messageID: input.assistantMessage.id,
+              sessionID: input.assistantMessage.sessionID,
+              type: "tool",
+              callID,
+              tool: "mock",
+              state: {
+                status: "pending",
+                input: {},
+                raw: "",
+              },
+            }),
+            abort: Effect.fn("TestSessionProcessor.abort")(() => Effect.void),
+            process: Effect.fn("TestSessionProcessor.process")(() => Effect.succeed("continue")),
+          }),
+        ),
       }),
-      process: async () => "continue",
-    }))
+    )
+    const bus = Bus.layer
+    const rt = ManagedRuntime.make(
+      Layer.mergeAll(SessionCompaction.layer, bus).pipe(
+        Layer.provide(Session.defaultLayer),
+        Layer.provide(layer),
+        Layer.provide(Agent.defaultLayer),
+        Layer.provide(Plugin.defaultLayer),
+        Layer.provide(bus),
+        Layer.provide(Config.defaultLayer),
+      ),
+    )
     spyOn(Provider, "getModel").mockImplementation(async () => model)
     spyOn(Agent, "get").mockImplementation(async () => ({
       name: "compaction",
@@ -77,7 +101,6 @@ describe("session.compaction restore", () => {
       },
     }))
     try {
-      const { SessionCompaction } = await import("../../src/session/compaction")
       await using tmp = await tmpdir({ git: true })
       await Instance.provide({
         directory: tmp.path,
@@ -137,13 +160,17 @@ describe("session.compaction restore", () => {
           if (!marker) {
             throw new Error("expected compaction marker user message")
           }
-          const result = await SessionCompaction.process({
-            parentID: marker.info.id,
-            messages: list,
-            sessionID: session.id,
-            abort: new AbortController().signal,
-            auto: true,
-          })
+          const result = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.process({
+                parentID: marker.info.id,
+                messages: list,
+                sessionID: session.id,
+                abort: new AbortController().signal,
+                auto: true,
+              }),
+            ),
+          )
           expect(result).toBe("continue")
 
           const msgs = await Session.messages({ sessionID: session.id })
@@ -173,6 +200,7 @@ describe("session.compaction restore", () => {
         },
       })
     } finally {
+      await rt.dispose()
       mock.restore()
     }
   })

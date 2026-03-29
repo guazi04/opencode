@@ -593,7 +593,7 @@ describe("session.message-v2.toModelMessage", () => {
     expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([])
   })
 
-  test("keeps errored assistant messages with tools and converts all tools to error results", () => {
+  test("keeps errored assistant messages with tools and converts all tools to error results", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
 
@@ -651,7 +651,7 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ]
 
-    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
       {
         role: "user",
         content: [{ type: "text", text: "run tool" }],

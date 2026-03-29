@@ -1827,14 +1827,13 @@ function Write(props: ToolProps<typeof WriteTool>) {
   })
   const pending = createMemo(() => {
     const state = props.part.state
-    if (state.status === "pending" && state.received) {
+    if (state.status === "pending" && "received" in state && typeof state.received === "number") {
       const bytes = formatKB(state.received)
       if (state.input.filePath) return `Write ${normalizePath(state.input.filePath as string)} (receiving… ${bytes})`
       return `Preparing write… (${bytes})`
     }
     return "Preparing write..."
   })
-
 
   return (
     <Switch>
@@ -2039,7 +2038,8 @@ function Edit(props: ToolProps<typeof EditTool>) {
 
   const pending = createMemo(() => {
     const state = props.part.state
-    if (state.status === "pending" && state.received) return `Preparing edit… (${formatKB(state.received)})`
+    if (state.status === "pending" && "received" in state && typeof state.received === "number")
+      return `Preparing edit… (${formatKB(state.received)})`
     return "Preparing edit..."
   })
 
@@ -2129,7 +2129,8 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
 
   const pending = createMemo(() => {
     const state = props.part.state
-    if (state.status === "pending" && state.received) return `Preparing patch… (${formatKB(state.received)})`
+    if (state.status === "pending" && "received" in state && typeof state.received === "number")
+      return `Preparing patch… (${formatKB(state.received)})`
     return "Preparing patch..."
   })
 

@@ -137,6 +137,7 @@ function fake(
     get message() {
       return msg
     },
+    nearMax: false,
     abort: Effect.fn("TestSessionProcessor.abort")(() => Effect.void),
     partFromToolCall() {
       return {

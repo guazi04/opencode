@@ -38,6 +38,7 @@ export namespace SessionProcessor {
   export interface Handle {
     readonly message: MessageV2.Assistant
     readonly partFromToolCall: (toolCallID: string) => MessageV2.ToolPart | undefined
+    readonly nearMax: boolean
     readonly abort: () => Effect.Effect<void>
     readonly process: (streamInput: LLM.StreamInput) => Effect.Effect<Result>
   }
@@ -45,6 +46,7 @@ export namespace SessionProcessor {
   export interface Info {
     readonly message: MessageV2.Assistant
     readonly partFromToolCall: (toolCallID: string) => MessageV2.ToolPart | undefined
+    readonly nearMax: boolean
     readonly process: (streamInput: LLM.StreamInput) => Promise<Result>
   }
 
@@ -70,6 +72,7 @@ export namespace SessionProcessor {
     active: Set<string>
     deltas: Record<string, { text: string; bytes: number; path: string | undefined; last: number }>
     idle: boolean
+    nearMax: boolean
   }
 
   type StreamEvent = Event
@@ -117,6 +120,7 @@ export namespace SessionProcessor {
           active: new Set<string>(),
           deltas: {},
           idle: false,
+          nearMax: false,
         }
 
         const parse = (e: unknown) => {
@@ -239,6 +243,7 @@ export namespace SessionProcessor {
                 metadata: value.providerMetadata,
               })) as MessageV2.ToolPart
               ctx.active.add(value.toolCallId)
+              delete ctx.deltas[value.toolCallId]
 
               const parts = yield* Effect.promise(() => MessageV2.parts(ctx.assistantMessage.id))
               const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
@@ -266,7 +271,6 @@ export namespace SessionProcessor {
                 ruleset: agent.permission,
               })
               return
-              delete ctx.deltas[value.toolCallId]
             }
 
             case "tool-result": {
@@ -332,6 +336,7 @@ export namespace SessionProcessor {
               const output = value.usage?.outputTokens ?? 0
               const max = ProviderTransform.maxOutputTokens(ctx.model)
               const near = value.finishReason === "tool-calls" && output >= max * NEAR_MAX
+              ctx.nearMax = near
               const reason = near ? "length" : value.finishReason
               log.info("finish-step", {
                 finishReason: reason,
@@ -505,6 +510,7 @@ export namespace SessionProcessor {
         const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
           log.info("process")
           ctx.needsCompaction = false
+          ctx.nearMax = false
           ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
           yield* Effect.gen(function* () {
@@ -541,7 +547,10 @@ export namespace SessionProcessor {
               yield* stream.pipe(
                 Stream.tap((event) =>
                   Effect.gen(function* () {
-                    if (timerId) { clearTimeout(timerId); timerId = undefined }
+                    if (timerId) {
+                      clearTimeout(timerId)
+                      timerId = undefined
+                    }
                     input.abort.throwIfAborted()
                     yield* handleEvent(event)
                     if (!ctx.needsCompaction && !ctl.signal.aborted) {
@@ -557,7 +566,6 @@ export namespace SessionProcessor {
             } finally {
               clear()
             }
-          })
           }).pipe(
             Effect.catchCauseIf(
               (cause) => !Cause.hasInterruptsOnly(cause),
@@ -608,6 +616,9 @@ export namespace SessionProcessor {
           get message() {
             return ctx.assistantMessage
           },
+          get nearMax() {
+            return ctx.nearMax
+          },
           partFromToolCall(toolCallID: string) {
             return ctx.toolcalls[toolCallID]
           },
@@ -643,6 +654,9 @@ export namespace SessionProcessor {
     return {
       get message() {
         return hit.message
+      },
+      get nearMax() {
+        return hit.nearMax
       },
       partFromToolCall(toolCallID: string) {
         return hit.partFromToolCall(toolCallID)

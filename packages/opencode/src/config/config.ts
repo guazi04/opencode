@@ -1,6 +1,6 @@
 import { Log } from "../util/log"
 import path from "path"
-import { pathToFileURL } from "url"
+import { pathToFileURL, fileURLToPath } from "url"
 import { createRequire } from "module"
 import os from "os"
 import z from "zod"
@@ -418,6 +418,9 @@ export namespace Config {
     const last = plugin.lastIndexOf("@")
     if (last > 0) {
       return plugin.substring(0, last)
+    }
+    return plugin
+  }
 
   export function pluginSpecifier(plugin: PluginSpec): string {
     return Array.isArray(plugin) ? plugin[0] : plugin

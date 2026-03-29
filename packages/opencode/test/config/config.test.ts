@@ -40,8 +40,6 @@ function testFileURL(...segments: string[]): string {
   return pathToFileURL(path.resolve(path.sep, ...segments)).href
 }
 
-
-
 afterEach(async () => {
   await fs.rm(managedConfigDir, { force: true, recursive: true }).catch(() => {})
 })
@@ -763,50 +761,54 @@ test("does not try to install dependencies in read-only OPENCODE_CONFIG_DIR", as
   }
 })
 
-test("installs dependencies in writable OPENCODE_CONFIG_DIR", async () => {
-  await using tmp = await tmpdir<string>({
-    init: async (dir) => {
-      const cfg = path.join(dir, "configdir")
-      await fs.mkdir(cfg, { recursive: true })
-      return cfg
-    },
-  })
-
-  const prev = process.env.OPENCODE_CONFIG_DIR
-  process.env.OPENCODE_CONFIG_DIR = tmp.extra
-  const online = spyOn(Network, "online").mockReturnValue(false)
-  const run = spyOn(BunProc, "run").mockImplementation(async (_cmd, opts) => {
-    const mod = path.join(opts?.cwd ?? "", "node_modules", "@opencode-ai", "plugin")
-    await fs.mkdir(mod, { recursive: true })
-    await Filesystem.write(
-      path.join(mod, "package.json"),
-      JSON.stringify({ name: "@opencode-ai/plugin", version: "1.0.0" }),
-    )
-    return {
-      code: 0,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.alloc(0),
-    }
-  })
-
-  try {
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        await Config.get()
-        await Config.waitForDependencies()
+test(
+  "installs dependencies in writable OPENCODE_CONFIG_DIR",
+  async () => {
+    await using tmp = await tmpdir<string>({
+      init: async (dir) => {
+        const cfg = path.join(dir, "configdir")
+        await fs.mkdir(cfg, { recursive: true })
+        return cfg
       },
     })
 
-    expect(await Filesystem.exists(path.join(tmp.extra, "package.json"))).toBe(true)
-    expect(await Filesystem.exists(path.join(tmp.extra, ".gitignore"))).toBe(true)
-  } finally {
-    online.mockRestore()
-    run.mockRestore()
-    if (prev === undefined) delete process.env.OPENCODE_CONFIG_DIR
-    else process.env.OPENCODE_CONFIG_DIR = prev
-  }
-}, { timeout: 30_000 })
+    const prev = process.env.OPENCODE_CONFIG_DIR
+    process.env.OPENCODE_CONFIG_DIR = tmp.extra
+    const online = spyOn(Network, "online").mockReturnValue(false)
+    const run = spyOn(BunProc, "run").mockImplementation(async (_cmd, opts) => {
+      const mod = path.join(opts?.cwd ?? "", "node_modules", "@opencode-ai", "plugin")
+      await fs.mkdir(mod, { recursive: true })
+      await Filesystem.write(
+        path.join(mod, "package.json"),
+        JSON.stringify({ name: "@opencode-ai/plugin", version: "1.0.0" }),
+      )
+      return {
+        code: 0,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+      }
+    })
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await Config.get()
+          await Config.waitForDependencies()
+        },
+      })
+
+      expect(await Filesystem.exists(path.join(tmp.extra, "package.json"))).toBe(true)
+      expect(await Filesystem.exists(path.join(tmp.extra, ".gitignore"))).toBe(true)
+    } finally {
+      online.mockRestore()
+      run.mockRestore()
+      if (prev === undefined) delete process.env.OPENCODE_CONFIG_DIR
+      else process.env.OPENCODE_CONFIG_DIR = prev
+    }
+  },
+  { timeout: 30_000 },
+)
 
 test("dedupes concurrent config dependency installs for the same dir", async () => {
   await using tmp = await tmpdir()
@@ -1910,10 +1912,7 @@ describe("resolvePluginSpec", () => {
       init: async (dir) => {
         const pluginDir = path.join(dir, "my-plugin", "src")
         await fs.mkdir(pluginDir, { recursive: true })
-        await Filesystem.write(
-          path.join(dir, "my-plugin", "package.json"),
-          JSON.stringify({ name: "my-plugin" }),
-        )
+        await Filesystem.write(path.join(dir, "my-plugin", "package.json"), JSON.stringify({ name: "my-plugin" }))
         await Filesystem.write(path.join(pluginDir, "index.ts"), "export default {}")
       },
     })
@@ -1936,13 +1935,12 @@ describe("deduplicatePlugins", () => {
     expect(result.length).toBe(3)
   })
 
-  test("prefers local file over npm package with same name", () => {
+  test("keeps local file and npm package separate with same name", () => {
     const plugins = ["oh-my-opencode@2.4.3", testFileURL("project", ".opencode", "plugin", "oh-my-opencode.js")]
 
     const result = Config.deduplicatePlugins(plugins)
 
-    expect(result.length).toBe(1)
-    expect(result[0]).toBe(testFileURL("project", ".opencode", "plugin", "oh-my-opencode.js"))
+    expect(result).toEqual(plugins)
   })
 
   test("keeps all index.js plugins from different directories", () => {
@@ -1956,6 +1954,7 @@ describe("deduplicatePlugins", () => {
 
     // Each has a distinct directory name, so all 3 should survive
     expect(result.length).toBe(3)
+  })
 
   test("keeps path plugins separate from package plugins", () => {
     const plugins = ["oh-my-opencode@2.4.3", "file:///project/.opencode/plugin/oh-my-opencode.js"]
