@@ -1061,7 +1061,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     expect(result[1].content).toBe("World")
   })
 
-  test("filters out empty text parts from array content", () => {
+  test("preserves assistant text parts verbatim from array content", () => {
     const msgs = [
       {
         role: "assistant",
@@ -1076,8 +1076,10 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
     expect(result).toHaveLength(1)
-    expect(result[0].content).toHaveLength(1)
-    expect(result[0].content[0]).toEqual({ type: "text", text: "Hello" })
+    expect(result[0].content).toHaveLength(3)
+    expect(result[0].content[0]).toEqual({ type: "text", text: "" })
+    expect(result[0].content[1]).toEqual({ type: "text", text: "Hello" })
+    expect(result[0].content[2]).toEqual({ type: "text", text: "" })
   })
 
   test("keeps empty reasoning parts from array content", () => {
@@ -1101,7 +1103,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     expect(result[0].content[2]).toEqual({ type: "reasoning", text: "" })
   })
 
-  test("keeps message when reasoning parts remain after text filtering", () => {
+  test("preserves assistant message when it contains empty text and reasoning", () => {
     const msgs = [
       { role: "user", content: "Hello" },
       {
@@ -1118,11 +1120,14 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
 
     expect(result).toHaveLength(3)
     expect(result[0].content).toBe("Hello")
-    expect(result[1].content).toEqual([{ type: "reasoning", text: "" }])
+    expect(result[1].content).toEqual([
+      { type: "text", text: "" },
+      { type: "reasoning", text: "" },
+    ])
     expect(result[2].content).toBe("World")
   })
 
-  test("keeps non-text/reasoning parts even if text parts are empty", () => {
+  test("preserves assistant non-text parts alongside empty text parts", () => {
     const msgs = [
       {
         role: "assistant",
@@ -1136,8 +1141,9 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
     expect(result).toHaveLength(1)
-    expect(result[0].content).toHaveLength(1)
-    expect(result[0].content[0]).toEqual({
+    expect(result[0].content).toHaveLength(2)
+    expect(result[0].content[0]).toEqual({ type: "text", text: "" })
+    expect(result[0].content[1]).toEqual({
       type: "tool-call",
       toolCallId: "123",
       toolName: "bash",
@@ -1145,7 +1151,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     })
   })
 
-  test("keeps messages with valid text alongside empty parts", () => {
+  test("preserves assistant messages with valid text alongside empty parts", () => {
     const msgs = [
       {
         role: "assistant",
@@ -1160,12 +1166,13 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
     expect(result).toHaveLength(1)
-    expect(result[0].content).toHaveLength(2)
+    expect(result[0].content).toHaveLength(3)
     expect(result[0].content[0]).toEqual({ type: "reasoning", text: "Thinking..." })
-    expect(result[0].content[1]).toEqual({ type: "text", text: "Result" })
+    expect(result[0].content[1]).toEqual({ type: "text", text: "" })
+    expect(result[0].content[2]).toEqual({ type: "text", text: "Result" })
   })
 
-  test("filters empty content for bedrock provider", () => {
+  test("bedrock preserves assistant array content verbatim", () => {
     const bedrockModel = {
       ...anthropicModel,
       id: "amazon-bedrock/anthropic.claude-opus-4-6",
@@ -1193,11 +1200,12 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
 
     expect(result).toHaveLength(2)
     expect(result[0].content).toBe("Hello")
-    expect(result[1].content).toHaveLength(1)
-    expect(result[1].content[0]).toEqual({ type: "text", text: "Answer" })
+    expect(result[1].content).toHaveLength(2)
+    expect(result[1].content[0]).toEqual({ type: "text", text: "" })
+    expect(result[1].content[1]).toEqual({ type: "text", text: "Answer" })
   })
 
-  test("bedrock filters empty reasoning parts with no metadata", () => {
+  test("bedrock preserves assistant empty reasoning parts", () => {
     const bedrockModel = {
       ...anthropicModel,
       id: "amazon-bedrock/anthropic.claude-opus-4-6",
@@ -1222,8 +1230,9 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     const result = ProviderTransform.message(msgs, bedrockModel, {})
 
     expect(result).toHaveLength(1)
-    expect(result[0].content).toHaveLength(1)
-    expect(result[0].content[0]).toEqual({ type: "text", text: "Answer" })
+    expect(result[0].content).toHaveLength(2)
+    expect(result[0].content[0]).toEqual({ type: "reasoning", text: "" })
+    expect(result[0].content[1]).toEqual({ type: "text", text: "Answer" })
   })
 
   test("bedrock keeps reasoning parts with metadata even if text is empty (redacted_thinking)", () => {
@@ -1285,7 +1294,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     expect(result[0].content[2]).toEqual({ type: "text", text: "Answer" })
   })
 
-  test("bedrock removes entire message when only content is empty reasoning with no metadata", () => {
+  test("bedrock preserves assistant message with only empty reasoning", () => {
     const bedrockModel = {
       ...anthropicModel,
       id: "amazon-bedrock/anthropic.claude-opus-4-6",
@@ -1311,9 +1320,59 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
 
     const result = ProviderTransform.message(msgs, bedrockModel, {})
 
-    expect(result).toHaveLength(2)
+    expect(result).toHaveLength(3)
     expect(result[0].content).toBe("Hello")
-    expect(result[1].content).toBe("World")
+    expect(result[1].content).toEqual([
+      { type: "reasoning", text: "" },
+      { type: "reasoning", text: "" },
+    ])
+    expect(result[2].content).toBe("World")
+  })
+
+  test("continues filtering non-assistant array text parts", () => {
+    const msgs = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "" },
+          { type: "text", text: "Hello" },
+          { type: "text", text: "" },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, anthropicModel, {})
+
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toEqual([{ type: "text", text: "Hello" }])
+  })
+
+  test("bedrock still filters non-assistant empty reasoning without metadata", () => {
+    const bedrockModel = {
+      ...anthropicModel,
+      id: "amazon-bedrock/anthropic.claude-opus-4-6",
+      providerID: "amazon-bedrock",
+      api: {
+        id: "anthropic.claude-opus-4-6",
+        url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        npm: "@ai-sdk/amazon-bedrock",
+      },
+    }
+
+    const msgs = [
+      {
+        role: "user",
+        content: [
+          { type: "reasoning", text: "" },
+          { type: "text", text: "Answer" },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toEqual([{ type: "text", text: "Answer" }])
   })
 
   test("does not filter for non-anthropic providers", () => {
