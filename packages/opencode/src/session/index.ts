@@ -255,24 +255,16 @@ export namespace Session {
     const outputTokens = safe(input.usage.outputTokens ?? 0)
     const reasoningTokens = safe(input.usage.reasoningTokens ?? 0)
 
-    const cacheReadInputTokens = safe(input.usage.cachedInputTokens ?? 0)
-    const cacheWriteInputTokens = safe(
-      (input.metadata?.["anthropic"]?.["cacheCreationInputTokens"] ??
-        // @ts-expect-error
-        input.metadata?.["bedrock"]?.["usage"]?.["cacheWriteInputTokens"] ??
-        // @ts-expect-error
-        input.metadata?.["venice"]?.["usage"]?.["cacheCreationInputTokens"] ??
-        0) as number,
+    const detail = Reflect.get(input.usage, "inputTokenDetails")
+    const cacheRead = typeof detail === "object" && detail !== null ? Reflect.get(detail, "cacheReadTokens") : undefined
+    const cacheWrite =
+      typeof detail === "object" && detail !== null ? Reflect.get(detail, "cacheWriteTokens") : undefined
+    const cacheReadInputTokens = safe(
+      (typeof cacheRead === "number" ? cacheRead : undefined) ?? input.usage.cachedInputTokens ?? 0,
     )
+    const cacheWriteInputTokens = safe(typeof cacheWrite === "number" ? cacheWrite : 0)
 
-    // OpenRouter provides inputTokens as the total count of input tokens (including cached).
-    // AFAIK other providers (OpenRouter/OpenAI/Gemini etc.) do it the same way e.g. vercel/ai#8794 (comment)
-    // Anthropic does it differently though - inputTokens doesn't include cached tokens.
-    // It looks like OpenCode's cost calculation assumes all providers return inputTokens the same way Anthropic does (I'm guessing getUsage logic was originally implemented with anthropic), so it's causing incorrect cost calculation for OpenRouter and others.
-    const excludesCachedTokens = !!(input.metadata?.["anthropic"] || input.metadata?.["bedrock"])
-    const adjustedInputTokens = safe(
-      excludesCachedTokens ? inputTokens : inputTokens - cacheReadInputTokens - cacheWriteInputTokens,
-    )
+    const adjustedInputTokens = safe(inputTokens - cacheReadInputTokens - cacheWriteInputTokens)
 
     const total = iife(() => {
       // Anthropic doesn't provide total_tokens, also ai sdk will vastly undercount if we
