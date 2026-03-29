@@ -12,6 +12,7 @@ import { Markdown } from "@opencode-ai/ui/markdown"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import type { Message, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { useLanguage } from "@/context/language"
+import { useProviders } from "@/hooks/use-providers"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { getSessionContextMetrics } from "./session-context-metrics"
 import { estimateSessionContextBreakdown, type SessionContextBreakdownKey } from "./session-context-breakdown"
@@ -23,6 +24,42 @@ const BREAKDOWN_COLOR: Record<SessionContextBreakdownKey, string> = {
   assistant: "var(--syntax-property)",
   tool: "var(--syntax-warning)",
   other: "var(--syntax-comment)",
+}
+
+type ToolCtx = {
+  id: string
+  description?: string
+  schema?: string
+}
+
+const isToolCtx = (x: unknown): x is ToolCtx => {
+  if (!x || typeof x !== "object") return false
+  if (!("id" in x) || typeof x.id !== "string") return false
+  if ("description" in x && typeof x.description !== "string") return false
+  if ("schema" in x && typeof x.schema !== "string") return false
+  return true
+}
+
+const readSystemContext = (x: UserMessage) => {
+  if (!("system_context" in x) || typeof x.system_context !== "string") return
+  const text = x.system_context.trim()
+  if (!text) return
+  return text
+}
+
+const readSystemSegments = (x: UserMessage) => {
+  if (!("system_segments" in x) || !Array.isArray(x.system_segments)) return
+  const text = x.system_segments.filter((part): part is string => typeof part === "string").map((part) => part.trim())
+  const list = text.filter((part) => part.length > 0)
+  if (!list.length) return
+  return list
+}
+
+const readToolContext = (x: UserMessage) => {
+  if (!("tool_context" in x) || !Array.isArray(x.tool_context)) return
+  const list = x.tool_context.filter(isToolCtx)
+  if (!list.length) return
+  return list
 }
 
 function Stat(props: { label: string; value: JSX.Element }) {
@@ -92,6 +129,7 @@ const emptyUserMessages: UserMessage[] = []
 export function SessionContextTab() {
   const sync = useSync()
   const language = useLanguage()
+  const providers = useProviders()
   const { params, view } = useSessionLayout()
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
@@ -130,7 +168,7 @@ export function SessionContextTab() {
       }),
   )
 
-  const metrics = createMemo(() => getSessionContextMetrics(messages(), sync.data.provider.all))
+  const metrics = createMemo(() => getSessionContextMetrics(messages(), providers.all()))
   const ctx = createMemo(() => metrics().context)
   const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
 
@@ -159,28 +197,21 @@ export function SessionContextTab() {
   })
 
   const systemContext = createMemo(() => {
-    const msg = findLast(visibleUserMessages(), (m) => !!m.system_context)
-    const ctx = msg?.system_context
-    if (!ctx) return
-    const trimmed = ctx.trim()
-    if (!trimmed) return
-    return trimmed
+    const msg = findLast(visibleUserMessages(), (x) => !!readSystemContext(x))
+    if (!msg) return
+    return readSystemContext(msg)
   })
 
   const systemSegments = createMemo(() => {
-    const msg = findLast(visibleUserMessages(), (m) => !!m.system_segments?.length)
-    const segments = msg?.system_segments
-    if (!segments?.length) return
-    const cleaned = segments.map((segment) => segment.trim()).filter((segment) => segment.length > 0)
-    if (!cleaned.length) return
-    return cleaned
+    const msg = findLast(visibleUserMessages(), (x) => !!readSystemSegments(x)?.length)
+    if (!msg) return
+    return readSystemSegments(msg)
   })
 
   const toolContext = createMemo(() => {
-    const msg = findLast(visibleUserMessages(), (m) => !!m.tool_context?.length)
-    const tools = msg?.tool_context
-    if (!tools?.length) return
-    return tools
+    const msg = findLast(visibleUserMessages(), (x) => !!readToolContext(x)?.length)
+    if (!msg) return
+    return readToolContext(msg)
   })
 
   const providerLabel = createMemo(() => {
