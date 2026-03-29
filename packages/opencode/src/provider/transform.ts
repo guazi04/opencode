@@ -62,6 +62,7 @@ export namespace ProviderTransform {
           }
           if (!Array.isArray(msg.content)) return msg
           const filtered = msg.content.filter((part) => {
+            if (msg.role === "assistant") return true
             if (part.type === "text") {
               return part.text !== ""
             }
