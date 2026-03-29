@@ -63,6 +63,11 @@ export namespace ProviderTransform {
             if (part.type === "text") {
               return part.text !== ""
             }
+            // Bedrock SDK silently drops reasoning parts without metadata,
+            // leaving empty messages that Bedrock rejects
+            if (part.type === "reasoning" && model.api.npm === "@ai-sdk/amazon-bedrock") {
+              return part.text !== "" || (part.providerOptions != null && Object.keys(part.providerOptions).length > 0)
+            }
             return true
           })
           if (filtered.length === 0) return undefined

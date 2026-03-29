@@ -1197,6 +1197,125 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     expect(result[1].content[0]).toEqual({ type: "text", text: "Answer" })
   })
 
+  test("bedrock filters empty reasoning parts with no metadata", () => {
+    const bedrockModel = {
+      ...anthropicModel,
+      id: "amazon-bedrock/anthropic.claude-opus-4-6",
+      providerID: "amazon-bedrock",
+      api: {
+        id: "anthropic.claude-opus-4-6",
+        url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        npm: "@ai-sdk/amazon-bedrock",
+      },
+    }
+
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "" },
+          { type: "text", text: "Answer" },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toHaveLength(1)
+    expect(result[0].content[0]).toEqual({ type: "text", text: "Answer" })
+  })
+
+  test("bedrock keeps reasoning parts with metadata even if text is empty (redacted_thinking)", () => {
+    const bedrockModel = {
+      ...anthropicModel,
+      id: "amazon-bedrock/anthropic.claude-opus-4-6",
+      providerID: "amazon-bedrock",
+      api: {
+        id: "anthropic.claude-opus-4-6",
+        url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        npm: "@ai-sdk/amazon-bedrock",
+      },
+    }
+
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "reasoning",
+            text: "",
+            providerOptions: { bedrock: { redactedData: "some-encrypted-data" } },
+          },
+          { type: "text", text: "Answer" },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toHaveLength(2)
+    expect(result[0].content[0]).toEqual({
+      type: "reasoning",
+      text: "",
+      providerOptions: { bedrock: { redactedData: "some-encrypted-data" } },
+    })
+    expect(result[0].content[1]).toEqual({ type: "text", text: "Answer" })
+  })
+
+  test("anthropic keeps all reasoning parts regardless of empty text", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "" },
+          { type: "reasoning", text: "thinking..." },
+          { type: "text", text: "Answer" },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, anthropicModel, {})
+
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toHaveLength(3)
+    expect(result[0].content[0]).toEqual({ type: "reasoning", text: "" })
+    expect(result[0].content[1]).toEqual({ type: "reasoning", text: "thinking..." })
+    expect(result[0].content[2]).toEqual({ type: "text", text: "Answer" })
+  })
+
+  test("bedrock removes entire message when only content is empty reasoning with no metadata", () => {
+    const bedrockModel = {
+      ...anthropicModel,
+      id: "amazon-bedrock/anthropic.claude-opus-4-6",
+      providerID: "amazon-bedrock",
+      api: {
+        id: "anthropic.claude-opus-4-6",
+        url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        npm: "@ai-sdk/amazon-bedrock",
+      },
+    }
+
+    const msgs = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "" },
+          { type: "reasoning", text: "" },
+        ],
+      },
+      { role: "user", content: "World" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    expect(result).toHaveLength(2)
+    expect(result[0].content).toBe("Hello")
+    expect(result[1].content).toBe("World")
+  })
+
   test("does not filter for non-anthropic providers", () => {
     const openaiModel = {
       ...anthropicModel,
