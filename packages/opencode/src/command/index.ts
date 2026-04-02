@@ -68,6 +68,7 @@ export namespace Command {
   export interface Interface {
     readonly get: (name: string) => Effect.Effect<Info | undefined>
     readonly list: () => Effect.Effect<Info[]>
+    readonly reload: () => Effect.Effect<void>
   }
 
   export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Command") {}
@@ -124,18 +125,22 @@ export namespace Command {
             source: "mcp",
             description: prompt.description,
             get template() {
-              return new Promise<string>(async (resolve, reject) => {
-                const template = await MCP.getPrompt(
+              return new Promise<string>((resolve, reject) => {
+                MCP.getPrompt(
                   prompt.client,
                   prompt.name,
                   prompt.arguments
                     ? Object.fromEntries(prompt.arguments.map((argument, i) => [argument.name, `$${i + 1}`]))
                     : {},
-                ).catch(reject)
-                resolve(
-                  template?.messages
-                    .map((message) => (message.content.type === "text" ? message.content.text : ""))
-                    .join("\n") || "",
+                ).then(
+                  (template) => {
+                    resolve(
+                      template?.messages
+                        .map((message) => (message.content.type === "text" ? message.content.text : ""))
+                        .join("\n") || "",
+                    )
+                  },
+                  (err) => reject(err),
                 )
               })
             },
@@ -173,7 +178,11 @@ export namespace Command {
         return Object.values(state.commands)
       })
 
-      return Service.of({ get, list })
+      const reload = Effect.fn("Command.reload")(function* () {
+        yield* InstanceState.invalidate(cache)
+      })
+
+      return Service.of({ get, list, reload })
     }),
   )
 
@@ -191,5 +200,9 @@ export namespace Command {
 
   export async function list() {
     return runPromise((svc) => svc.list())
+  }
+
+  export async function reload() {
+    return runPromise((svc) => svc.reload())
   }
 }
