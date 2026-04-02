@@ -206,6 +206,44 @@ export const InstanceRoutes = (app?: Hono) =>
         return c.json(skills)
       },
     )
+    .post(
+      "/skill/reload",
+      describeRoute({
+        summary: "Reload skills",
+        description: "Refresh the skill cache and dependent command cache for the current OpenCode instance.",
+        operationId: "app.skills.reload",
+        responses: {
+          200: {
+            description: "Reload result",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z
+                    .object({
+                      ok: z.boolean(),
+                      skill_count: z.number(),
+                      command_count: z.number(),
+                    })
+                    .meta({
+                      ref: "SkillReload",
+                    }),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        await Skill.reload()
+        const skills = await Skill.all()
+        const commands = await Command.list()
+        return c.json({
+          ok: true,
+          skill_count: skills.length,
+          command_count: commands.length,
+        })
+      },
+    )
     .get(
       "/lsp",
       describeRoute({
