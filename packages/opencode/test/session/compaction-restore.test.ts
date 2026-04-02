@@ -12,6 +12,7 @@ import { SessionCompaction } from "../../src/session/compaction"
 import { SessionProcessor } from "../../src/session/processor"
 import { MessageID, PartID } from "../../src/session/schema"
 import { tmpdir } from "../fixture/fixture"
+import { ProviderTest } from "../fake/provider"
 
 const model: Provider.Model = {
   id: ModelID.make("gpt-4"),
@@ -52,6 +53,7 @@ const model: Provider.Model = {
 
 describe("session.compaction restore", () => {
   test("restores user agent configuration on synthetic continue after compaction", async () => {
+    const provider = ProviderTest.fake({ model })
     const layer = Layer.succeed(
       SessionProcessor.Service,
       SessionProcessor.Service.of({
@@ -78,18 +80,17 @@ describe("session.compaction restore", () => {
         ),
       }),
     )
-    const bus = Bus.layer
     const rt = ManagedRuntime.make(
-      Layer.mergeAll(SessionCompaction.layer, bus).pipe(
+      SessionCompaction.layer.pipe(
         Layer.provide(Session.defaultLayer),
         Layer.provide(layer),
         Layer.provide(Agent.defaultLayer),
         Layer.provide(Plugin.defaultLayer),
-        Layer.provide(bus),
+        Layer.provide(provider.layer),
+        Layer.provide(Bus.layer),
         Layer.provide(Config.defaultLayer),
       ),
     )
-    spyOn(Provider, "getModel").mockImplementation(async () => model)
     spyOn(Agent, "get").mockImplementation(async () => ({
       name: "compaction",
       mode: "subagent",
