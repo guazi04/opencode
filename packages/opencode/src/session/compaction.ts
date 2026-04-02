@@ -15,8 +15,9 @@ import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { NotFoundError } from "@/storage/db"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { Cause, Effect, Exit, Layer, ServiceMap } from "effect"
+import { Effect, Layer, ServiceMap } from "effect"
 import { makeRuntime } from "@/effect/run-service"
+import { InstanceState } from "@/effect/instance-state"
 import { isOverflow as overflow } from "./overflow"
 
 export namespace SessionCompaction {
@@ -45,7 +46,7 @@ export namespace SessionCompaction {
       parentID: MessageID
       messages: MessageV2.WithParts[]
       sessionID: SessionID
-      abort: AbortSignal
+      abort?: AbortSignal
       auto: boolean
       overflow?: boolean
     }) => Effect.Effect<"continue" | "stop">
@@ -54,12 +55,12 @@ export namespace SessionCompaction {
       agent: string
       model: { providerID: ProviderID; modelID: ModelID }
       format?: MessageV2.User["format"]
-      tools?: Record<string, boolean>
-      system?: string
-      system_context?: string
-      system_segments?: string[]
-      tool_context?: MessageV2.ToolContext[]
-      variant?: string
+      tools?: MessageV2.User["tools"]
+      system?: MessageV2.User["system"]
+      system_context?: MessageV2.User["system_context"]
+      system_segments?: MessageV2.User["system_segments"]
+      tool_context?: MessageV2.User["tool_context"]
+      variant?: MessageV2.User["variant"]
       auto: boolean
       overflow?: boolean
     }) => Effect.Effect<void>
@@ -70,7 +71,13 @@ export namespace SessionCompaction {
   export const layer: Layer.Layer<
     Service,
     never,
-    Bus.Service | Config.Service | Session.Service | Agent.Service | Plugin.Service | SessionProcessor.Service
+    | Bus.Service
+    | Config.Service
+    | Session.Service
+    | Agent.Service
+    | Plugin.Service
+    | SessionProcessor.Service
+    | Provider.Service
   > = Layer.effect(
     Service,
     Effect.gen(function* () {
@@ -80,6 +87,7 @@ export namespace SessionCompaction {
       const agents = yield* Agent.Service
       const plugin = yield* Plugin.Service
       const processors = yield* SessionProcessor.Service
+      const provider = yield* Provider.Service
 
       const isOverflow = Effect.fn("SessionCompaction.isOverflow")(function* (input: {
         tokens: MessageV2.Assistant["tokens"]
@@ -142,20 +150,29 @@ export namespace SessionCompaction {
         parentID: MessageID
         messages: MessageV2.WithParts[]
         sessionID: SessionID
-        abort: AbortSignal
+        abort?: AbortSignal
         auto: boolean
         overflow?: boolean
       }) {
-        const userMessage = input.messages.findLast((m) => m.info.id === input.parentID)!.info as MessageV2.User
+        const parent = input.messages.findLast((m) => m.info.id === input.parentID)
+        if (!parent || parent.info.role !== "user") {
+          throw new Error(`Compaction parent must be a user message: ${input.parentID}`)
+        }
+        const userMessage = parent.info
 
         let messages = input.messages
-        let replay: MessageV2.WithParts | undefined
+        let replay:
+          | {
+              info: MessageV2.User
+              parts: MessageV2.Part[]
+            }
+          | undefined
         if (input.overflow) {
           const idx = input.messages.findIndex((m) => m.info.id === input.parentID)
           for (let i = idx - 1; i >= 0; i--) {
             const msg = input.messages[i]
             if (msg.info.role === "user" && !msg.parts.some((p) => p.type === "compaction")) {
-              replay = msg
+              replay = { info: msg.info, parts: msg.parts }
               messages = input.messages.slice(0, i)
               break
             }
@@ -169,11 +186,9 @@ export namespace SessionCompaction {
         }
 
         const agent = yield* agents.get("compaction")
-        const model = yield* Effect.promise(() =>
-          agent.model
-            ? Provider.getModel(agent.model.providerID, agent.model.modelID)
-            : Provider.getModel(userMessage.model.providerID, userMessage.model.modelID),
-        )
+        const model = agent.model
+          ? yield* provider.getModel(agent.model.providerID, agent.model.modelID)
+          : yield* provider.getModel(userMessage.model.providerID, userMessage.model.modelID)
         // Allow plugins to inject context or replace compaction prompt.
         const compacting = yield* plugin.trigger(
           "experimental.session.compacting",
@@ -183,6 +198,7 @@ export namespace SessionCompaction {
         const defaultPrompt = `Provide a detailed prompt for continuing our conversation above.
 Focus on information that would be helpful for continuing the conversation, including what we did, what we're doing, which files we're working on, and what we're going to do next.
 The summary that you construct will be used so that another agent can read it and continue the work.
+Do not call any tools. Respond only with the summary text.
 
 When constructing the summary, try to stick to this template:
 ---
@@ -212,7 +228,8 @@ When constructing the summary, try to stick to this template:
         const msgs = structuredClone(messages)
         yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
         const modelMessages = yield* Effect.promise(() => MessageV2.toModelMessages(msgs, model, { stripMedia: true }))
-        const msg = (yield* session.updateMessage({
+        const ctx = yield* InstanceState.context
+        const msg: MessageV2.Assistant = {
           id: MessageID.ascending(),
           role: "assistant",
           parentID: input.parentID,
@@ -222,8 +239,8 @@ When constructing the summary, try to stick to this template:
           variant: userMessage.variant,
           summary: true,
           path: {
-            cwd: Instance.directory,
-            root: Instance.worktree,
+            cwd: ctx.directory,
+            root: ctx.worktree,
           },
           cost: 0,
           tokens: {
@@ -237,25 +254,17 @@ When constructing the summary, try to stick to this template:
           time: {
             created: Date.now(),
           },
-        })) as MessageV2.Assistant
+        }
+        yield* session.updateMessage(msg)
         const processor = yield* processors.create({
           assistantMessage: msg,
           sessionID: input.sessionID,
           model,
-          abort: input.abort,
-        })
-        const cancel = Effect.fn("SessionCompaction.cancel")(function* () {
-          if (!input.abort.aborted || msg.time.completed) return
-          msg.error = msg.error ?? new MessageV2.AbortedError({ message: "Aborted" }).toObject()
-          msg.finish = msg.finish ?? "error"
-          msg.time.completed = Date.now()
-          yield* session.updateMessage(msg)
         })
         const result = yield* processor
           .process({
             user: userMessage,
             agent,
-            abort: input.abort,
             sessionID: input.sessionID,
             tools: {},
             system: [],
@@ -267,8 +276,9 @@ When constructing the summary, try to stick to this template:
               },
             ],
             model,
+            abort: input.abort,
           })
-          .pipe(Effect.ensuring(cancel()))
+          .pipe(Effect.onInterrupt(() => processor.abort()))
 
         if (result === "compact") {
           processor.message.error = new MessageV2.ContextOverflowError({
@@ -283,7 +293,7 @@ When constructing the summary, try to stick to this template:
 
         if (result === "continue" && input.auto) {
           if (replay) {
-            const original = replay.info as MessageV2.User
+            const original = replay.info
             const replayMsg = yield* session.updateMessage({
               id: MessageID.ascending(),
               role: "user",
@@ -360,12 +370,12 @@ When constructing the summary, try to stick to this template:
         agent: string
         model: { providerID: ProviderID; modelID: ModelID }
         format?: MessageV2.User["format"]
-        tools?: Record<string, boolean>
-        system?: string
-        system_context?: string
-        system_segments?: string[]
-        tool_context?: MessageV2.ToolContext[]
-        variant?: string
+        tools?: MessageV2.User["tools"]
+        system?: MessageV2.User["system"]
+        system_context?: MessageV2.User["system_context"]
+        system_segments?: MessageV2.User["system_segments"]
+        tool_context?: MessageV2.User["tool_context"]
+        variant?: MessageV2.User["variant"]
         auto: boolean
         overflow?: boolean
       }) {
@@ -406,6 +416,7 @@ When constructing the summary, try to stick to this template:
   export const defaultLayer = Layer.unwrap(
     Effect.sync(() =>
       layer.pipe(
+        Layer.provide(Provider.defaultLayer),
         Layer.provide(Session.defaultLayer),
         Layer.provide(SessionProcessor.defaultLayer),
         Layer.provide(Agent.defaultLayer),
@@ -416,7 +427,7 @@ When constructing the summary, try to stick to this template:
     ),
   )
 
-  const { runPromise, runPromiseExit } = makeRuntime(Service, defaultLayer)
+  const { runPromise } = makeRuntime(Service, defaultLayer)
 
   export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
     return runPromise((svc) => svc.isOverflow(input))
@@ -426,49 +437,30 @@ When constructing the summary, try to stick to this template:
     return runPromise((svc) => svc.prune(input))
   }
 
-  export async function process(input: {
-    parentID: MessageID
-    messages: MessageV2.WithParts[]
-    sessionID: SessionID
-    abort: AbortSignal
-    auto: boolean
-    overflow?: boolean
-  }) {
-    const exit = await runPromiseExit((svc) => svc.process(input), { signal: input.abort })
-    if (Exit.isFailure(exit)) {
-      if (Cause.hasInterrupts(exit.cause) && input.abort.aborted) return "stop"
-      throw Cause.squash(exit.cause)
-    }
-    // retroactive reclamation: clear output/attachments from previously compacted parts
-    const cfg = await Config.get()
-    if (cfg.compaction?.reclaim !== false) {
-      for (const msg of input.messages) {
-        for (const part of msg.parts) {
-          if (part.type !== "tool") continue
-          if (part.state.status !== "completed") continue
-          if (!part.state.time.compacted) continue
-          if (part.state.output === "[reclaimed]") continue
-          part.state.output = "[reclaimed]"
-          part.state.attachments = []
-          await Session.updatePart(part)
-        }
-      }
-    }
-    return exit.value
-  }
+  export const process = fn(
+    z.object({
+      parentID: MessageID.zod,
+      messages: z.custom<MessageV2.WithParts[]>(),
+      sessionID: SessionID.zod,
+      abort: z.custom<AbortSignal>().optional(),
+      auto: z.boolean(),
+      overflow: z.boolean().optional(),
+    }),
+    (input) => runPromise((svc) => svc.process(input)),
+  )
 
   export const create = fn(
     z.object({
       sessionID: SessionID.zod,
       agent: z.string(),
       model: z.object({ providerID: ProviderID.zod, modelID: ModelID.zod }),
-      format: MessageV2.Format.optional(),
-      tools: z.record(z.string(), z.boolean()).optional(),
-      system: z.string().optional(),
-      system_context: z.string().optional(),
-      system_segments: z.array(z.string()).optional(),
-      tool_context: z.array(MessageV2.ToolContext).optional(),
-      variant: z.string().optional(),
+      format: z.custom<MessageV2.User["format"]>().optional(),
+      tools: z.custom<MessageV2.User["tools"]>().optional(),
+      system: z.custom<MessageV2.User["system"]>().optional(),
+      system_context: z.custom<MessageV2.User["system_context"]>().optional(),
+      system_segments: z.custom<MessageV2.User["system_segments"]>().optional(),
+      tool_context: z.custom<MessageV2.User["tool_context"]>().optional(),
+      variant: z.custom<MessageV2.User["variant"]>().optional(),
       auto: z.boolean(),
       overflow: z.boolean().optional(),
     }),

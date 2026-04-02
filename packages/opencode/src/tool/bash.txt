@@ -1,5 +1,7 @@
 Executes a bash command in a persistent shell session with optional timeout.
 
+Be aware: OS: ${os}, Shell: ${shell}
+
 All commands run in ${directory} by default. Use `workdir` instead of `cd <directory> && <command>`.
 Use this tool for terminal operations (git, npm, docker, etc.), not file reads/writes/edits/searches.
 
@@ -12,7 +14,7 @@ Usage notes:
 - Provide a concise 5-10 word `description`.
 - If output exceeds ${maxLines} lines or ${maxBytes} bytes, it is truncated and full output is saved to a file. Use Read/Grep for full inspection (not head/tail).
 - Prefer dedicated tools: Glob (file search), Grep (content search), Read, Edit, Write; respond directly instead of echo/printf.
-- Multiple commands: run independent commands in parallel Bash calls; chain dependent commands with `&&`; use `;` only when failure is acceptable; do not split commands with newlines.
+- Multiple commands: run independent commands in parallel Bash calls; ${chaining}; do not split commands with newlines.
 
 Git Safety Protocol:
 - NEVER update the git config.

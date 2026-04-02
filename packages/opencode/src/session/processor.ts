@@ -1,8 +1,7 @@
-import { Cause, Effect, Exit, Layer, ServiceMap } from "effect"
+import { Cause, Effect, Layer, ServiceMap } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
-import { makeRuntime } from "@/effect/run-service"
 import { Config } from "@/config/config"
 import { Permission } from "@/permission"
 import { Plugin } from "@/plugin"
@@ -24,7 +23,6 @@ import { Question } from "@/question"
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
   const STREAM_IDLE_TIMEOUT_MS = 600_000
-  const STREAM_IDLE_TIMEOUT_S = STREAM_IDLE_TIMEOUT_MS / 1000
   const NEAR_MAX = 0.95
   const PATH_RE = /"filePath"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/
   const THROTTLE_MS = 500
@@ -43,18 +41,10 @@ export namespace SessionProcessor {
     readonly process: (streamInput: LLM.StreamInput) => Effect.Effect<Result>
   }
 
-  export interface Info {
-    readonly message: MessageV2.Assistant
-    readonly partFromToolCall: (toolCallID: string) => MessageV2.ToolPart | undefined
-    readonly nearMax: boolean
-    readonly process: (streamInput: LLM.StreamInput) => Promise<Result>
-  }
-
   type Input = {
     assistantMessage: MessageV2.Assistant
     sessionID: SessionID
     model: Provider.Model
-    abort: AbortSignal
   }
 
   export interface Interface {
@@ -105,11 +95,11 @@ export namespace SessionProcessor {
       const status = yield* SessionStatus.Service
 
       const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
+        let aborted = false
         const ctx: ProcessorContext = {
           assistantMessage: input.assistantMessage,
           sessionID: input.sessionID,
           model: input.model,
-          abort: input.abort,
           toolcalls: {},
           shouldBreak: false,
           snapshot: undefined,
@@ -124,7 +114,7 @@ export namespace SessionProcessor {
         }
 
         const parse = (e: unknown) => {
-          if (ctx.idle && !input.abort.aborted) {
+          if (ctx.idle && !aborted) {
             ctx.idle = false
             return new MessageV2.APIError({
               message: "LLM stream idle timeout, no data received",
@@ -134,7 +124,7 @@ export namespace SessionProcessor {
           }
           return MessageV2.fromError(e, {
             providerID: input.model.providerID,
-            aborted: input.abort.aborted,
+            aborted,
           })
         }
 
@@ -181,6 +171,9 @@ export namespace SessionProcessor {
               return
 
             case "tool-input-start":
+              if (ctx.assistantMessage.summary) {
+                throw new Error(`Tool call not allowed while generating summary: ${value.toolName}`)
+              }
               ctx.toolcalls[value.id] = (yield* session.updatePart({
                 id: ctx.toolcalls[value.id]?.id ?? PartID.ascending(),
                 messageID: ctx.assistantMessage.id,
@@ -234,6 +227,9 @@ export namespace SessionProcessor {
               return
 
             case "tool-call": {
+              if (ctx.assistantMessage.summary) {
+                throw new Error(`Tool call not allowed while generating summary: ${value.toolName}`)
+              }
               const match = ctx.toolcalls[value.toolCallId]
               if (!match) return
               ctx.toolcalls[value.toolCallId] = (yield* session.updatePart({
@@ -374,12 +370,10 @@ export namespace SessionProcessor {
                 }
                 ctx.snapshot = undefined
               }
-              yield* Effect.promise(() =>
-                SessionSummary.summarize({
-                  sessionID: ctx.sessionID,
-                  messageID: ctx.assistantMessage.parentID,
-                }),
-              ).pipe(Effect.ignoreCause({ log: true, message: "session summary failed" }), Effect.forkDetach)
+              SessionSummary.summarize({
+                sessionID: ctx.sessionID,
+                messageID: ctx.assistantMessage.parentID,
+              })
               if (
                 !ctx.assistantMessage.summary &&
                 isOverflow({ cfg: yield* config.get(), tokens: usage.tokens, model: ctx.model })
@@ -492,7 +486,7 @@ export namespace SessionProcessor {
         })
 
         const halt = Effect.fn("SessionProcessor.halt")(function* (e: unknown) {
-          log.error("process", { error: e, stack: JSON.stringify((e as any)?.stack) })
+          log.error("process", { error: e, stack: e instanceof Error ? e.stack : undefined })
           const error = parse(e)
           if (MessageV2.ContextOverflowError.isInstance(error)) {
             ctx.needsCompaction = true
@@ -508,95 +502,101 @@ export namespace SessionProcessor {
         })
 
         const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
-          log.info("process")
-          ctx.needsCompaction = false
-          ctx.nearMax = false
-          ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+          return yield* Effect.gen(function* () {
+            log.info("process")
+            ctx.needsCompaction = false
+            ctx.nearMax = false
+            aborted = false
+            ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+            const sig = streamInput.abort
 
-          yield* Effect.gen(function* () {
-            ctx.currentText = undefined
-            ctx.reasoningMap = {}
-            ctx.idle = false
-            const ctl = new AbortController()
-            const relay = () => ctl.abort(input.abort.reason)
-            input.abort.addEventListener("abort", relay, { once: true })
-            if (input.abort.aborted) relay()
+            yield* Effect.gen(function* () {
+              ctx.currentText = undefined
+              ctx.reasoningMap = {}
+              ctx.idle = false
+              const ctl = new AbortController()
+              const relay = () => {
+                aborted = true
+                ctl.abort(sig?.reason)
+              }
+              if (sig) {
+                sig.addEventListener("abort", relay, { once: true })
+                if (sig.aborted) relay()
+              }
 
-            let timerId: ReturnType<typeof setTimeout> | undefined
-            const arm = (ms = STREAM_IDLE_TIMEOUT_MS) => {
-              if (timerId) clearTimeout(timerId)
-              timerId = setTimeout(() => {
-                if (input.abort.aborted || ctl.signal.aborted) return
-                ctx.idle = true
-                log.warn(`LLM stream idle timeout after ${Math.round(ms / 1000)}s`, {
-                  sessionID: ctx.sessionID,
-                  providerID: ctx.model.providerID,
-                  modelID: ctx.model.id,
-                })
-                ctl.abort(new DOMException("LLM stream idle timeout", "TimeoutError"))
-              }, ms)
+              let timerId: ReturnType<typeof setTimeout> | undefined
+              const arm = (ms = STREAM_IDLE_TIMEOUT_MS) => {
+                if (timerId) clearTimeout(timerId)
+                timerId = setTimeout(() => {
+                  if (sig?.aborted || ctl.signal.aborted) return
+                  ctx.idle = true
+                  log.warn(`LLM stream idle timeout after ${Math.round(ms / 1000)}s`, {
+                    sessionID: ctx.sessionID,
+                    providerID: ctx.model.providerID,
+                    modelID: ctx.model.id,
+                  })
+                  ctl.abort(new DOMException("LLM stream idle timeout", "TimeoutError"))
+                }, ms)
+              }
+              const clear = () => {
+                if (timerId) clearTimeout(timerId)
+                if (sig) sig.removeEventListener("abort", relay)
+              }
+
+              try {
+                const stream = llm.stream({ ...streamInput, abort: ctl.signal })
+                arm()
+                yield* stream.pipe(
+                  Stream.tap((event) =>
+                    Effect.gen(function* () {
+                      if (timerId) {
+                        clearTimeout(timerId)
+                        timerId = undefined
+                      }
+                      sig?.throwIfAborted()
+                      yield* handleEvent(event)
+                      if (!ctx.needsCompaction && !ctl.signal.aborted) {
+                        if (ctx.active.size === 0) arm()
+                        else arm(STREAM_IDLE_TIMEOUT_MS * 2)
+                      }
+                    }),
+                  ),
+                  Stream.takeUntil(() => ctx.needsCompaction),
+                  Stream.runDrain,
+                )
+                if (ctx.idle) throw ctl.signal.reason
+              } finally {
+                clear()
+              }
+            }).pipe(
+              Effect.onInterrupt(() => Effect.sync(() => void (aborted = true))),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) => Effect.fail(Cause.squash(cause)),
+              ),
+              Effect.retry(
+                SessionRetry.policy({
+                  parse,
+                  set: (info) =>
+                    status.set(ctx.sessionID, {
+                      type: "retry",
+                      attempt: info.attempt,
+                      message: info.message,
+                      next: info.next,
+                    }),
+                }),
+              ),
+              Effect.catch(halt),
+              Effect.ensuring(cleanup()),
+            )
+
+            if (aborted && !ctx.assistantMessage.error) {
+              yield* abort()
             }
-            const clear = () => {
-              if (timerId) clearTimeout(timerId)
-              input.abort.removeEventListener("abort", relay)
-            }
-
-            try {
-              const stream = llm.stream({ ...streamInput, abort: ctl.signal })
-              arm()
-              yield* stream.pipe(
-                Stream.tap((event) =>
-                  Effect.gen(function* () {
-                    if (timerId) {
-                      clearTimeout(timerId)
-                      timerId = undefined
-                    }
-                    input.abort.throwIfAborted()
-                    yield* handleEvent(event)
-                    if (!ctx.needsCompaction && !ctl.signal.aborted) {
-                      if (ctx.active.size === 0) arm()
-                      else arm(STREAM_IDLE_TIMEOUT_MS * 2)
-                    }
-                  }),
-                ),
-                Stream.takeUntil(() => ctx.needsCompaction),
-                Stream.runDrain,
-              )
-              if (ctx.idle) throw ctl.signal.reason
-            } finally {
-              clear()
-            }
-          }).pipe(
-            Effect.catchCauseIf(
-              (cause) => !Cause.hasInterruptsOnly(cause),
-              (cause) => Effect.fail(Cause.squash(cause)),
-            ),
-            Effect.retry(
-              SessionRetry.policy({
-                parse,
-                set: (info) =>
-                  status.set(ctx.sessionID, {
-                    type: "retry",
-                    attempt: info.attempt,
-                    message: info.message,
-                    next: info.next,
-                  }),
-              }),
-            ),
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? halt(new DOMException("Aborted", "AbortError"))
-                : halt(Cause.squash(cause)),
-            ),
-            Effect.ensuring(cleanup()),
-          )
-
-          if (input.abort.aborted && !ctx.assistantMessage.error) {
-            yield* abort()
-          }
-          if (ctx.needsCompaction) return "compact"
-          if (ctx.blocked || ctx.assistantMessage.error || input.abort.aborted) return "stop"
-          return "continue"
+            if (ctx.needsCompaction) return "compact"
+            if (ctx.blocked || ctx.assistantMessage.error || aborted) return "stop"
+            return "continue"
+          }).pipe(Effect.onInterrupt(() => abort().pipe(Effect.asVoid)))
         })
 
         const abort = Effect.fn("SessionProcessor.abort")(() =>
@@ -646,32 +646,4 @@ export namespace SessionProcessor {
       ),
     ),
   )
-
-  const { runPromise } = makeRuntime(Service, defaultLayer)
-
-  export async function create(input: Input): Promise<Info> {
-    const hit = await runPromise((svc) => svc.create(input))
-    return {
-      get message() {
-        return hit.message
-      },
-      get nearMax() {
-        return hit.nearMax
-      },
-      partFromToolCall(toolCallID: string) {
-        return hit.partFromToolCall(toolCallID)
-      },
-      async process(streamInput: LLM.StreamInput) {
-        const exit = await Effect.runPromiseExit(hit.process(streamInput), { signal: input.abort })
-        if (Exit.isFailure(exit)) {
-          if (Cause.hasInterrupts(exit.cause) && input.abort.aborted) {
-            await Effect.runPromise(hit.abort())
-            return "stop"
-          }
-          throw Cause.squash(exit.cause)
-        }
-        return exit.value
-      },
-    }
-  }
 }
