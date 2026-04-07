@@ -1,20 +1,17 @@
-Executes a bash command in a persistent shell session with optional timeout.
+Execute a bash command in a persistent shell session with optional timeout.
 
-Be aware: OS: ${os}, Shell: ${shell}
+OS: ${os}, Shell: ${shell}
 
-All commands run in ${directory} by default. Use `workdir` instead of `cd <directory> && <command>`.
-Use this tool for terminal operations (git, npm, docker, etc.), not file reads/writes/edits/searches.
+All commands run in ${directory} by default. Use `workdir`.
+Use this tool for terminal operations (git, npm, docker, etc.), not file reads, writes, edits, or searches.
 
-Before executing:
-- If a command creates files/directories, verify the parent path first (for example, `ls foo` before `mkdir foo/bar`).
-- Quote paths with spaces using double quotes, then execute and capture output.
+Before executing: verify parent paths before creating files/dirs; quote paths with spaces.
 
 Usage notes:
-- `command` is required; `timeout` is optional in milliseconds (default 120000).
-- Provide a concise 5-10 word `description`.
-- If output exceeds ${maxLines} lines or ${maxBytes} bytes, it is truncated and full output is saved to a file. Use Read/Grep for full inspection (not head/tail).
-- Prefer dedicated tools: Glob (file search), Grep (content search), Read, Edit, Write; respond directly instead of echo/printf.
-- Multiple commands: run independent commands in parallel Bash calls; ${chaining}; do not split commands with newlines.
+- `command` is required; `timeout` is optional in ms (default 120000); `description` should be 5-10 words.
+- If output exceeds ${maxLines} lines or ${maxBytes} bytes, it is truncated and full output is saved to a file. Inspect with Read/Grep.
+- Prefer dedicated tools: Glob, Grep, Read, Edit, Write; respond directly instead of echo/printf.
+- Multiple commands: run independent commands in parallel Bash calls; ${chaining}; do not use newlines.
 
 Git Safety Protocol:
 - NEVER update the git config.

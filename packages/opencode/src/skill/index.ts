@@ -1,6 +1,5 @@
 import os from "os"
 import path from "path"
-import { pathToFileURL } from "url"
 import z from "zod"
 import { Effect, Layer, ServiceMap } from "effect"
 import { NamedError } from "@opencode-ai/util/error"
@@ -242,6 +241,12 @@ export namespace Skill {
     Layer.provide(AppFileSystem.defaultLayer),
   )
 
+  function truncate(text: string) {
+    const i = text.indexOf(". ")
+    if (i >= 0) return text.slice(0, i + 1)
+    return text.length > 200 ? `${text.slice(0, 200)}...` : text
+  }
+
   export function fmt(list: Info[], opts: { verbose: boolean }) {
     if (list.length === 0) return "No skills are currently available."
 
@@ -251,15 +256,16 @@ export namespace Skill {
         ...list.flatMap((skill) => [
           "  <skill>",
           `    <name>${skill.name}</name>`,
-          `    <description>${skill.description}</description>`,
-          `    <location>${pathToFileURL(skill.location).href}</location>`,
+          `    <description>${truncate(skill.description)}</description>`,
           "  </skill>",
         ]),
         "</available_skills>",
       ].join("\n")
     }
 
-    return ["## Available Skills", ...list.map((skill) => `- **${skill.name}**: ${skill.description}`)].join("\n")
+    return ["## Available Skills", ...list.map((skill) => `- **${skill.name}**: ${truncate(skill.description)}`)].join(
+      "\n",
+    )
   }
 
   const { runPromise } = makeRuntime(Service, defaultLayer)

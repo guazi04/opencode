@@ -7,6 +7,11 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
+import { InstructionPrompt } from "../../src/session/instruction"
+import { LLM } from "../../src/session/llm"
+import { MessageID, PartID } from "../../src/session/schema"
+import { SystemPrompt } from "../../src/session/system"
+import { Token } from "../../src/util/token"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 
@@ -376,6 +381,318 @@ describe("session.prompt regression", () => {
     } finally {
       server.stop(true)
     }
+  })
+})
+
+describe("session.prompt context command", () => {
+  test("runs locally from the last assistant usage", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        agent: {
+          build: {
+            model: "openai/gpt-5.2",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const user: MessageV2.User = {
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          time: { created: Date.now() - 10 },
+          agent: "build",
+          model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        }
+        await Session.updateMessage(user)
+        await Session.updatePart({
+          id: PartID.ascending(),
+          messageID: user.id,
+          sessionID: session.id,
+          type: "text",
+          text: "hello",
+        })
+        const assistant: MessageV2.Assistant = {
+          id: MessageID.ascending(),
+          parentID: user.id,
+          role: "assistant",
+          mode: "build",
+          agent: "build",
+          path: { cwd: tmp.path, root: tmp.path },
+          cost: 0,
+          tokens: {
+            total: 1600,
+            input: 500,
+            output: 600,
+            reasoning: 200,
+            cache: { read: 200, write: 100 },
+          },
+          modelID: ModelID.make("gpt-5.2"),
+          providerID: ProviderID.make("openai"),
+          time: { created: Date.now() - 5, completed: Date.now() - 1 },
+          sessionID: session.id,
+          finish: "stop",
+        }
+        await Session.updateMessage(assistant)
+        await Session.updatePart({
+          id: PartID.ascending(),
+          messageID: assistant.id,
+          sessionID: session.id,
+          type: "text",
+          text: "hi",
+        })
+
+        const result = await SessionPrompt.command({
+          sessionID: session.id,
+          command: "context",
+          arguments: "",
+        })
+
+        expect(result.info.role).toBe("assistant")
+        const text = result.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n")
+        expect(text).toContain("Total usage:")
+        expect(text).toContain("Cache: 200 read / 100 write / 500 new input")
+        expect(text).toContain("Estimated breakdown:")
+        expect(text).toContain("Skills:")
+        expect(text).toContain("MCP tools:")
+        expect(text).toContain("Agents:")
+        const part = result.parts.find((part): part is MessageV2.TextPart => part.type === "text")
+        expect(part).toBeDefined()
+        expect(part?.metadata?.command).toBe("context")
+        expect(part?.metadata?.local).toBe(true)
+        expect(part?.metadata?.data).toMatchObject({
+          model: "openai/gpt-5.2",
+          agent: "build",
+          used: 1600,
+          limit: expect.any(Number),
+          reserved: expect.any(Number),
+          free: expect.any(Number),
+          categories: {
+            tools: expect.any(Number),
+            system: expect.any(Number),
+            skills: expect.any(Number),
+            messages: expect.any(Number),
+          },
+          cache: {
+            read: 200,
+            write: 100,
+            input: 500,
+          },
+          skills: expect.any(Array),
+          mcpTools: expect.any(Array),
+          agents: expect.any(Array),
+          hasAssistant: true,
+        })
+
+        const msgs = await Session.messages({ sessionID: session.id })
+        expect(msgs.filter((msg) => msg.info.role === "user")).toHaveLength(1)
+        expect(msgs.filter((msg) => msg.info.role === "assistant")).toHaveLength(2)
+
+        await Session.remove(session.id)
+      },
+    })
+  })
+
+  test("works before any assistant usage exists", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        agent: {
+          build: {
+            model: "openai/gpt-5.2",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const result = await SessionPrompt.command({
+          sessionID: session.id,
+          command: "context",
+          arguments: "",
+          agent: "build",
+          model: "openai/gpt-5.2",
+        })
+
+        expect(result.info.role).toBe("assistant")
+        const text = result.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n")
+        expect(text).toContain("Total usage: 0")
+        expect(text).toContain("No assistant usage has been recorded yet")
+        const part = result.parts.find((part): part is MessageV2.TextPart => part.type === "text")
+        expect(part?.metadata?.data).toMatchObject({
+          used: 0,
+          hasAssistant: false,
+        })
+
+        await Session.remove(session.id)
+      },
+    })
+  })
+
+  test("keeps last real usage across repeated context calls", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        agent: {
+          build: {
+            model: "openai/gpt-5.2",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const user: MessageV2.User = {
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          time: { created: Date.now() - 10 },
+          agent: "build",
+          model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        }
+        await Session.updateMessage(user)
+        await Session.updatePart({
+          id: PartID.ascending(),
+          messageID: user.id,
+          sessionID: session.id,
+          type: "text",
+          text: "hello",
+        })
+        await Session.updateMessage({
+          id: MessageID.ascending(),
+          parentID: user.id,
+          role: "assistant",
+          mode: "build",
+          agent: "build",
+          path: { cwd: tmp.path, root: tmp.path },
+          cost: 0,
+          tokens: {
+            total: 1600,
+            input: 500,
+            output: 600,
+            reasoning: 200,
+            cache: { read: 200, write: 100 },
+          },
+          modelID: ModelID.make("gpt-5.2"),
+          providerID: ProviderID.make("openai"),
+          time: { created: Date.now() - 5, completed: Date.now() - 1 },
+          sessionID: session.id,
+          finish: "stop",
+        })
+
+        const first = await SessionPrompt.command({
+          sessionID: session.id,
+          command: "context",
+          arguments: "",
+        })
+        const second = await SessionPrompt.command({
+          sessionID: session.id,
+          command: "context",
+          arguments: "",
+        })
+
+        const one = first.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n")
+        const two = second.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n")
+
+        expect(one).toContain("Total usage: 1.6k")
+        expect(two).toContain("Total usage: 1.6k")
+        expect(two).toContain("Cache: 200 read / 100 write / 500 new input")
+
+        await Session.remove(session.id)
+      },
+    })
+  })
+
+  test("matches llm prompt composition for stored system text", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        agent: {
+          build: {
+            model: "openai/gpt-5.2",
+          },
+        },
+      },
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "AGENTS.md"), "local instructions\n")
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const model = {
+          providerID: ProviderID.make("openai"),
+          api: { id: "gpt-5.2" },
+        } as Parameters<typeof SystemPrompt.provider>[0]
+        const instructions = await InstructionPrompt.system()
+        const sys = instructions[0]
+        expect(sys).toBeTruthy()
+
+        const user: MessageV2.User = {
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          time: { created: Date.now() - 10 },
+          agent: "build",
+          model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+          system: sys,
+        }
+        await Session.updateMessage(user)
+        await Session.updatePart({
+          id: PartID.ascending(),
+          messageID: user.id,
+          sessionID: session.id,
+          type: "text",
+          text: "hello",
+        })
+        const result = await SessionPrompt.command({
+          sessionID: session.id,
+          command: "context",
+          arguments: "",
+        })
+        const part = result.parts.find((item): item is MessageV2.TextPart => item.type === "text")
+        const prompt = LLM.prompts({
+          provider: SystemPrompt.provider(model),
+          system: [...(await SystemPrompt.environment(model)), ...instructions],
+          user: sys,
+          isCodex: false,
+        })
+        const exp = prompt.reduce((sum, item) => sum + Token.estimate(item), 0)
+
+        expect(part?.metadata?.data).toMatchObject({
+          categories: {
+            system: exp,
+          },
+        })
+
+        await Session.remove(session.id)
+      },
+    })
   })
 })
 

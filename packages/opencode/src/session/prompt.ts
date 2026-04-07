@@ -8,10 +8,10 @@ import { SessionRevert } from "./revert"
 import { Session } from "."
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
+import { ModelsDev } from "../provider/models"
 import { ModelID, ProviderID } from "../provider/schema"
 import { type Tool as AITool, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
 import { SessionCompaction } from "./compaction"
-import { Instance } from "../project/instance"
 import { Bus } from "../bus"
 import { ProviderTransform } from "../provider/transform"
 import { SystemPrompt } from "./system"
@@ -30,6 +30,7 @@ import { Flag } from "../flag/flag"
 import { ulid } from "ulid"
 import { spawn } from "child_process"
 import { Command } from "../command"
+import { Skill } from "../skill"
 import { pathToFileURL, fileURLToPath } from "url"
 import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
@@ -38,6 +39,7 @@ import { SessionProcessor } from "./processor"
 import { TaskTool } from "@/tool/task"
 import { Tool } from "@/tool/tool"
 import { Permission } from "@/permission"
+import { Auth } from "@/auth"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
 import { Shell } from "@/shell/shell"
@@ -45,6 +47,9 @@ import { AppFileSystem } from "@/filesystem"
 import { Truncate } from "@/tool/truncate"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
+import { Token } from "@/util/token"
+import { Config } from "@/config/config"
+import { usableTokens } from "./overflow"
 import { Cause, Effect, Exit, Layer, Option, Scope, ServiceMap } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRuntime } from "@/effect/run-service"
@@ -62,6 +67,115 @@ IMPORTANT:
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 
+const TOOL_DESC_MAX = 240
+const TOOL_SCHEMA_MAX = 280
+const TOOL_PROP_MAX = 8
+const TOOL_REQUIRED_MAX = 6
+
+const isObj = (input: unknown): input is Record<string, unknown> => typeof input === "object" && input !== null
+
+const clip = (input: string, max: number) => {
+  const text = input.replace(/\s+/g, " ").trim()
+  if (text.length <= max) return text
+  return `${text.slice(0, max - 1).trimEnd()}…`
+}
+
+const schemaObj = (input: unknown) => {
+  if (!isObj(input)) return
+  if (isObj(input.jsonSchema)) return input.jsonSchema
+  return input
+}
+
+const schemaType = (input: unknown) => {
+  if (!isObj(input)) return "unknown"
+  if (typeof input.type === "string") return input.type
+  if (Array.isArray(input.type)) {
+    const types = input.type.filter((item): item is string => typeof item === "string")
+    if (types.length) return types.join("|")
+  }
+  if (Array.isArray(input.anyOf)) return "anyOf"
+  if (Array.isArray(input.oneOf)) return "oneOf"
+  if (Array.isArray(input.enum)) return "enum"
+  return "unknown"
+}
+
+const schemaSummary = (input: unknown) => {
+  const schema = schemaObj(input)
+  if (!schema) return
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((item): item is string => typeof item === "string")
+    : []
+  const props = isObj(schema.properties)
+    ? Object.entries(schema.properties)
+        .slice(0, TOOL_PROP_MAX)
+        .map(([id, val]) => `${id}:${schemaType(val)}`)
+    : []
+  const parts = [schemaType(schema)]
+  if (required.length) parts.push(`required(${required.slice(0, TOOL_REQUIRED_MAX).join(", ")})`)
+  if (props.length) parts.push(`props(${props.join(", ")})`)
+  return clip(parts.join(" • "), TOOL_SCHEMA_MAX)
+}
+
+const toolSummary = (input: Record<string, AITool>): MessageV2.ToolContext[] =>
+  Object.entries(input)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, tool]) => {
+      const description =
+        typeof tool.description === "string" && tool.description.trim().length > 0
+          ? clip(tool.description, TOOL_DESC_MAX)
+          : undefined
+      const schema = schemaSummary(tool.inputSchema)
+      return {
+        id,
+        ...(description ? { description } : {}),
+        ...(schema ? { schema } : {}),
+      }
+    })
+
+const sameText = (a?: string[], b?: string[]) => {
+  if (!a && !b) return true
+  if (!a || !b) return false
+  if (a.length !== b.length) return false
+  return a.every((item, idx) => item === b[idx])
+}
+
+const sameTools = (a?: MessageV2.ToolContext[], b?: MessageV2.ToolContext[]) => {
+  if (!a && !b) return true
+  if (!a || !b) return false
+  if (a.length !== b.length) return false
+  return a.every((item, idx) => {
+    const next = b[idx]
+    if (!next) return false
+    return item.id === next.id && item.description === next.description && item.schema === next.schema
+  })
+}
+
+function formatTokens(input: number) {
+  if (input >= 1000) return `${Math.round(input / 100) / 10}k`
+  return `${input}`
+}
+
+function formatPercent(input: number, total: number) {
+  if (total <= 0) return "0%"
+  return `${Math.round((input / total) * 100)}%`
+}
+
+function skillText(input: Skill.Info) {
+  const i = input.description.indexOf(". ")
+  const description =
+    i >= 0
+      ? input.description.slice(0, i + 1)
+      : input.description.length > 200
+        ? `${input.description.slice(0, 200)}...`
+        : input.description
+  return [
+    "  <skill>",
+    `    <name>${input.name}</name>`,
+    `    <description>${description}</description>`,
+    "  </skill>",
+  ].join("\n")
+}
+
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
 
@@ -77,13 +191,34 @@ export namespace SessionPrompt {
 
   export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/SessionPrompt") {}
 
-  export const layer = Layer.effect(
+  export const layer: Layer.Layer<
+    Service,
+    never,
+    | Bus.Service
+    | SessionStatus.Service
+    | Session.Service
+    | Agent.Service
+    | Config.Service
+    | Provider.Service
+    | SessionProcessor.Service
+    | SessionCompaction.Service
+    | Plugin.Service
+    | Command.Service
+    | Permission.Service
+    | AppFileSystem.Service
+    | MCP.Service
+    | LSP.Service
+    | FileTime.Service
+    | ToolRegistry.Service
+    | Truncate.Service
+  > = Layer.effect(
     Service,
     Effect.gen(function* () {
       const bus = yield* Bus.Service
       const status = yield* SessionStatus.Service
       const sessions = yield* Session.Service
       const agents = yield* Agent.Service
+      const config = yield* Config.Service
       const provider = yield* Provider.Service
       const processor = yield* SessionProcessor.Service
       const compaction = yield* SessionCompaction.Service
@@ -469,7 +604,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           })
         }
 
-        for (const [key, item] of Object.entries(yield* mcp.tools())) {
+        for (const [key, item] of Object.entries(yield* mcp.tools()).sort(([a], [b]) => a.localeCompare(b))) {
           const execute = item.execute
           if (!execute) continue
 
@@ -953,6 +1088,29 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return yield* Effect.failCause(exit.cause)
       })
 
+      const getContextModel = Effect.fn("SessionPrompt.getContextModel")(function* (
+        providerID: ProviderID,
+        modelID: ModelID,
+        sessionID: SessionID,
+      ) {
+        const exit = yield* provider.getModel(providerID, modelID).pipe(Effect.exit)
+        if (Exit.isSuccess(exit)) return exit.value
+        const err = Cause.squash(exit.cause)
+        if (!Provider.ModelNotFoundError.isInstance(err)) return yield* Effect.failCause(exit.cause)
+        const list = yield* Effect.promise(() => ModelsDev.get())
+        const info = list[providerID]
+        const model = info ? Provider.fromModelsDevProvider(info).models[modelID] : undefined
+        if (model) return model
+        const hint = err.data.suggestions?.length ? ` Did you mean: ${err.data.suggestions.join(", ")}?` : ""
+        yield* bus.publish(Session.Event.Error, {
+          sessionID,
+          error: new NamedError.Unknown({
+            message: `Model not found: ${err.data.providerID}/${err.data.modelID}.${hint}`,
+          }).toObject(),
+        })
+        return yield* Effect.failCause(exit.cause)
+      })
+
       const lastModel = Effect.fnUntraced(function* (sessionID: SessionID) {
         const model = yield* Effect.promise(async () => {
           for await (const item of MessageV2.stream(sessionID)) {
@@ -1349,6 +1507,277 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           throw new Error("Impossible")
         })
 
+      const buildContext = Effect.fn("SessionPrompt.buildContext")(function* (input: {
+        sessionID: SessionID
+        agent: Agent.Info
+        model: Provider.Model
+      }) {
+        const cfg = yield* config.get()
+        const msgs = yield* Effect.promise(() => MessageV2.filterCompacted(MessageV2.stream(input.sessionID)))
+        const byID = new Map(msgs.map((msg) => [msg.info.id, msg]))
+        const local = (msg: MessageV2.WithParts) =>
+          msg.info.role === "assistant" &&
+          msg.parts.some(
+            (part) =>
+              part.type === "text" &&
+              part.metadata?.local === true &&
+              part.metadata?.command === Command.Default.CONTEXT,
+          )
+        const ast = msgs.findLast(
+          (msg): msg is MessageV2.WithParts & { info: MessageV2.Assistant } =>
+            msg.info.role === "assistant" && !local(msg),
+        )
+        const usr = ast
+          ? byID.get(ast.info.parentID)?.info.role === "user"
+            ? (byID.get(ast.info.parentID) as MessageV2.WithParts | undefined)
+            : msgs.findLast((msg) => msg.info.role === "user")
+          : msgs.findLast((msg) => msg.info.role === "user")
+        const base = usr?.info.role === "user" ? usr.info : undefined
+        const activeAgent =
+          base && base.agent === input.agent.name
+            ? input.agent
+            : ((yield* agents.get(base?.agent ?? input.agent.name)) ?? input.agent)
+        const [env, instructions, skills, skillList, modelMsgs, builtin, mcpTools, auth] = yield* Effect.promise(() =>
+          Promise.all([
+            SystemPrompt.environment(input.model),
+            InstructionPrompt.system(),
+            SystemPrompt.skills(activeAgent),
+            Skill.available(activeAgent),
+            MessageV2.toModelMessages(msgs, input.model),
+            ToolRegistry.tools(
+              { modelID: ModelID.make(input.model.api.id), providerID: input.model.providerID },
+              activeAgent,
+            ),
+            MCP.tools(),
+            Auth.get(input.model.providerID),
+          ]),
+        )
+        const isCodex = input.model.providerID === "openai" && auth?.type === "oauth"
+        const system = LLM.prompts({
+          prompt: activeAgent.prompt,
+          provider: SystemPrompt.provider(input.model),
+          system: [...env, ...instructions],
+          user: base?.system,
+          isCodex,
+        })
+        const systemTokens = system.reduce((sum, item) => sum + Token.estimate(item), 0)
+        const skillTokens = skills ? Token.estimate(skills) : 0
+        const builtinTokens = builtin.reduce(
+          (sum, item) =>
+            sum +
+            Token.estimate(
+              [
+                item.id,
+                item.description,
+                JSON.stringify(ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))),
+              ].join("\n"),
+            ),
+          0,
+        )
+        const mcpEntries = Object.entries(mcpTools)
+        const mcpToolTokens = yield* Effect.forEach(
+          mcpEntries,
+          ([key, item]) =>
+            Effect.promise(() =>
+              Promise.resolve(asSchema(item.inputSchema).jsonSchema).then((schema) =>
+                Token.estimate(
+                  [key, item.description ?? "", JSON.stringify(ProviderTransform.schema(input.model, schema))].join(
+                    "\n",
+                  ),
+                ),
+              ),
+            ),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map((result) => result.reduce((sum, item) => sum + item, 0)))
+        const used = ast
+          ? (ast.info.tokens.total ??
+            ast.info.tokens.input +
+              ast.info.tokens.output +
+              ast.info.tokens.reasoning +
+              ast.info.tokens.cache.read +
+              ast.info.tokens.cache.write)
+          : 0
+        const cats = (() => {
+          if (!ast) {
+            return {
+              system: systemTokens,
+              tools: builtinTokens + mcpToolTokens,
+              skills: skillTokens,
+              messages: Token.estimate(JSON.stringify(modelMsgs)),
+            }
+          }
+          const sum = systemTokens + skillTokens + builtinTokens + mcpToolTokens
+          if (sum <= used) {
+            return {
+              system: systemTokens,
+              tools: builtinTokens + mcpToolTokens,
+              skills: skillTokens,
+              messages: used - sum,
+            }
+          }
+          const ratio = used / sum
+          const system = Math.round(systemTokens * ratio)
+          const tools = Math.round((builtinTokens + mcpToolTokens) * ratio)
+          const skills = Math.round(skillTokens * ratio)
+          return {
+            system,
+            tools,
+            skills,
+            messages: Math.max(0, used - system - tools - skills),
+          }
+        })()
+        const limit = input.model.limit.context
+        const usable = usableTokens({ cfg, model: input.model })
+        const room = Math.max(0, limit - used)
+        const free = Math.max(0, usable - used)
+        const reserved = Math.max(0, limit - used - free)
+        const agentsInSession = Array.from(
+          new Set(
+            msgs.flatMap((msg) => [
+              msg.info.agent,
+              ...msg.parts.flatMap((part) => {
+                if (part.type === "agent") return [part.name]
+                if (part.type === "subtask") return [part.agent]
+                return []
+              }),
+            ]),
+          ),
+        ).toSorted((a, b) => a.localeCompare(b))
+        const skillLines = skillList.length
+          ? skillList.map((item) => `- ${item.name}: ~${formatTokens(Token.estimate(skillText(item)))}`).join("\n")
+          : "- none"
+        const mcpLines = mcpEntries.length ? mcpEntries.map(([key]) => `- ${key}`).join("\n") : "- none"
+        const agentLines = agentsInSession.length
+          ? agentsInSession.map((item) => `- ${item}`).join("\n")
+          : `- ${activeAgent.name}`
+        const data = {
+          model: `${input.model.providerID}/${input.model.id}`,
+          agent: activeAgent.name,
+          used,
+          limit,
+          reserved,
+          free,
+          categories: cats,
+          cache: {
+            read: ast?.info.tokens.cache.read ?? 0,
+            write: ast?.info.tokens.cache.write ?? 0,
+            input: ast?.info.tokens.input ?? 0,
+          },
+          skills: skillList.map((item) => ({
+            name: item.name,
+            tokens: Token.estimate(skillText(item)),
+          })),
+          mcpTools: mcpEntries.map(([key]) => key),
+          agents: agentsInSession,
+          hasAssistant: !!ast,
+        }
+        const notes = [
+          ast
+            ? "- Total and cache values come from the last assistant response."
+            : "- No assistant usage has been recorded yet, so total and cache values are 0.",
+          "- Category values are rough estimates based on chars/4 and may not sum exactly.",
+        ].join("\n")
+        const text = [
+          `Context window for ${activeAgent.name} using ${input.model.providerID}/${input.model.id}`,
+          "",
+          `Total usage: ${formatTokens(used)} / ${formatTokens(limit)} tokens (${formatPercent(used, limit)})`,
+          `Cache: ${formatTokens(data.cache.read)} read / ${formatTokens(data.cache.write)} write / ${formatTokens(data.cache.input)} new input`,
+          "",
+          "Estimated breakdown:",
+          `- System prompt: ~${formatTokens(data.categories.system)}`,
+          `- Tools: ~${formatTokens(data.categories.tools)}`,
+          `- Skills: ~${formatTokens(data.categories.skills)}`,
+          `- Messages: ~${formatTokens(data.categories.messages)}`,
+          `- Remaining: ~${formatTokens(room)}`,
+          "",
+          "Skills:",
+          skillLines,
+          "",
+          "MCP tools:",
+          mcpLines,
+          "",
+          "Agents:",
+          agentLines,
+          "",
+          "Notes:",
+          notes,
+        ].join("\n")
+        return { text, data }
+      })
+
+      const createContextResponse = Effect.fn("SessionPrompt.createContextResponse")(function* (input: {
+        sessionID: SessionID
+        messageID?: MessageID
+        command: string
+        agent: Agent.Info
+        model: Provider.Model
+        variant?: string
+      }) {
+        const ctx = yield* InstanceState.context
+        const msgs = yield* Effect.promise(() => MessageV2.filterCompacted(MessageV2.stream(input.sessionID)))
+        const lastUser = msgs.findLast(
+          (msg): msg is MessageV2.WithParts & { info: MessageV2.User } => msg.info.role === "user",
+        )
+        const parentID = yield* Effect.gen(function* () {
+          if (lastUser) return lastUser.info.id
+          const info: MessageV2.User = {
+            id: input.messageID ?? MessageID.ascending(),
+            role: "user",
+            sessionID: input.sessionID,
+            time: { created: Date.now() },
+            agent: input.agent.name,
+            model: { providerID: input.model.providerID, modelID: input.model.id },
+            variant: input.variant,
+          }
+          yield* sessions.updateMessage(info)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: info.id,
+            sessionID: input.sessionID,
+            type: "text",
+            text: `/${input.command}`,
+            synthetic: true,
+            ignored: true,
+          })
+          return info.id
+        })
+        const now = Date.now()
+        const result = yield* buildContext({
+          sessionID: input.sessionID,
+          agent: input.agent,
+          model: input.model,
+        })
+        const msg: MessageV2.Assistant = {
+          id: MessageID.ascending(),
+          parentID,
+          role: "assistant",
+          mode: input.agent.name,
+          agent: input.agent.name,
+          variant: input.variant,
+          path: { cwd: ctx.directory, root: ctx.worktree },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: input.model.id,
+          providerID: input.model.providerID,
+          time: { created: now, completed: now },
+          sessionID: input.sessionID,
+          finish: "stop",
+        }
+        const part: MessageV2.TextPart = {
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: input.sessionID,
+          type: "text",
+          text: result.text,
+          ignored: true,
+          metadata: { command: input.command, local: true, data: result.data },
+        }
+        yield* sessions.updateMessage(msg)
+        yield* sessions.updatePart(part)
+        yield* sessions.touch(input.sessionID)
+        return { info: msg, parts: [part] }
+      })
+
       const runLoop: (sessionID: SessionID) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
         function* (sessionID: SessionID) {
           const ctx = yield* InstanceState.context
@@ -1377,11 +1806,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
 
             if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
-            if (
-              lastAssistant?.finish &&
-              !["tool-calls"].includes(lastAssistant.finish) &&
-              lastUser.id < lastAssistant.id
-            ) {
+            let user = lastUser
+            if (lastAssistant?.finish && !["tool-calls"].includes(lastAssistant.finish) && user.id < lastAssistant.id) {
               log.info("exiting loop", { sessionID })
               break
             }
@@ -1390,23 +1816,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             if (step === 1)
               yield* title({
                 session,
-                modelID: lastUser.model.modelID,
-                providerID: lastUser.model.providerID,
+                modelID: user.model.modelID,
+                providerID: user.model.providerID,
                 history: msgs,
               }).pipe(Effect.ignore, Effect.forkIn(scope))
 
-            const model = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
+            const model = yield* getModel(user.model.providerID, user.model.modelID, sessionID)
             const task = tasks.pop()
 
             if (task?.type === "subtask") {
-              yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+              yield* handleSubtask({ task, model, lastUser: user, sessionID, session, msgs })
               continue
             }
 
             if (task?.type === "compaction") {
               const result = yield* compaction.process({
                 messages: msgs,
-                parentID: lastUser.id,
+                parentID: user.id,
                 sessionID,
                 auto: task.auto,
                 overflow: task.overflow,
@@ -1422,25 +1848,25 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             ) {
               yield* compaction.create({
                 sessionID,
-                agent: lastUser.agent,
-                model: lastUser.model,
-                format: lastUser.format,
-                tools: lastUser.tools,
-                system: lastUser.system,
-                system_context: lastUser.system_context,
-                system_segments: lastUser.system_segments,
-                tool_context: lastUser.tool_context,
-                variant: lastUser.variant,
+                agent: user.agent,
+                model: user.model,
+                format: user.format,
+                tools: user.tools,
+                system: user.system,
+                system_context: user.system_context,
+                system_segments: user.system_segments,
+                tool_context: user.tool_context,
+                variant: user.variant,
                 auto: true,
               })
               continue
             }
 
-            const agent = yield* agents.get(lastUser.agent)
+            const agent = yield* agents.get(user.agent)
             if (!agent) {
               const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
               const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-              const error = new NamedError.Unknown({ message: `Agent not found: "${lastUser.agent}".${hint}` })
+              const error = new NamedError.Unknown({ message: `Agent not found: "${user.agent}".${hint}` })
               yield* bus.publish(Session.Event.Error, { sessionID, error: error.toObject() })
               throw error
             }
@@ -1450,11 +1876,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             const msg: MessageV2.Assistant = {
               id: MessageID.ascending(),
-              parentID: lastUser.id,
+              parentID: user.id,
               role: "assistant",
               mode: agent.name,
               agent: agent.name,
-              variant: lastUser.variant,
+              variant: user.variant,
               path: { cwd: ctx.directory, root: ctx.worktree },
               cost: 0,
               tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -1479,22 +1905,22 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   agent,
                   session,
                   model,
-                  tools: lastUser.tools,
+                  tools: user.tools,
                   processor: handle,
                   bypassAgentCheck,
                   messages: msgs,
                 })
 
-                if (lastUser.format?.type === "json_schema") {
+                if (user.format?.type === "json_schema") {
                   tools["StructuredOutput"] = createStructuredOutputTool({
-                    schema: lastUser.format.schema,
+                    schema: user.format.schema,
                     onSuccess(output) {
                       structured = output
                     },
                   })
                 }
 
-                if (step === 1) SessionSummary.summarize({ sessionID, messageID: lastUser.id })
+                if (step === 1) SessionSummary.summarize({ sessionID, messageID: user.id })
 
                 if (step > 1 && lastFinished) {
                   for (const m of msgs) {
@@ -1525,10 +1951,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ]),
                 )
                 const system = [...env, ...(skills ? [skills] : []), ...instructions]
-                const format = lastUser.format ?? { type: "text" as const }
+                const format = user.format ?? { type: "text" as const }
                 if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+                const context = system.join("\n")
+                const segments = [...system]
+                const toolContext = toolSummary(tools)
+                if (
+                  user.system_context !== context ||
+                  !sameText(user.system_segments, segments) ||
+                  !sameTools(user.tool_context, toolContext)
+                ) {
+                  const next = yield* sessions.updateMessage({
+                    ...user,
+                    system_context: context,
+                    system_segments: segments,
+                    tool_context: toolContext,
+                  })
+                  if (next.role === "user") user = next
+                }
                 const result = yield* handle.process({
-                  user: lastUser,
+                  user,
                   agent,
                   permission: session.permission,
                   sessionID,
@@ -1562,15 +2004,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 if (result === "compact") {
                   yield* compaction.create({
                     sessionID,
-                    agent: lastUser.agent,
-                    model: lastUser.model,
-                    format: lastUser.format,
-                    tools: lastUser.tools,
-                    system: lastUser.system,
-                    system_context: lastUser.system_context,
-                    system_segments: lastUser.system_segments,
-                    tool_context: lastUser.tool_context,
-                    variant: lastUser.variant,
+                    agent: user.agent,
+                    model: user.model,
+                    format: user.format,
+                    tools: user.tools,
+                    system: user.system,
+                    system_context: user.system_context,
+                    system_segments: user.system_segments,
+                    tool_context: user.tool_context,
+                    variant: user.variant,
                     auto: true,
                     overflow: !handle.message.finish,
                   })
@@ -1617,10 +2059,58 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
           throw error
         }
+        const fallbackAgent = input.agent ?? (yield* agents.defaultAgent())
         const agentName = cmd.agent ?? input.agent ?? (yield* agents.defaultAgent())
+        const agent = yield* agents.get(agentName)
+        if (!agent) {
+          const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
+          const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
+          const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
+          yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
+          throw error
+        }
 
         const raw = input.arguments.match(argsRegex) ?? []
         const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
+
+        const taskModel = yield* Effect.gen(function* () {
+          if (cmd.model) return Provider.parseModel(cmd.model)
+          if (cmd.agent) {
+            const cmdAgent = yield* agents.get(cmd.agent)
+            if (cmdAgent?.model) return cmdAgent.model
+          }
+          if (input.model) return Provider.parseModel(input.model)
+          return yield* lastModel(input.sessionID)
+        })
+
+        const model =
+          input.command === Command.Default.CONTEXT
+            ? yield* getContextModel(taskModel.providerID, taskModel.modelID, input.sessionID)
+            : yield* getModel(taskModel.providerID, taskModel.modelID, input.sessionID)
+
+        if (input.command === Command.Default.CONTEXT) {
+          yield* plugin.trigger(
+            "command.execute.before",
+            { command: input.command, sessionID: input.sessionID, arguments: input.arguments },
+            { parts: [] },
+          )
+          const result = yield* createContextResponse({
+            sessionID: input.sessionID,
+            messageID: input.messageID,
+            command: input.command,
+            agent,
+            model,
+            variant: input.variant,
+          })
+          yield* bus.publish(Command.Event.Executed, {
+            name: input.command,
+            sessionID: input.sessionID,
+            arguments: input.arguments,
+            messageID: result.info.id,
+          })
+          return result
+        }
+
         const templateCommand = yield* Effect.promise(async () => cmd.template)
 
         const placeholders = templateCommand.match(placeholderRegex) ?? []
@@ -1657,27 +2147,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
         template = template.trim()
 
-        const taskModel = yield* Effect.gen(function* () {
-          if (cmd.model) return Provider.parseModel(cmd.model)
-          if (cmd.agent) {
-            const cmdAgent = yield* agents.get(cmd.agent)
-            if (cmdAgent?.model) return cmdAgent.model
-          }
-          if (input.model) return Provider.parseModel(input.model)
-          return yield* lastModel(input.sessionID)
-        })
-
-        yield* getModel(taskModel.providerID, taskModel.modelID, input.sessionID)
-
-        const agent = yield* agents.get(agentName)
-        if (!agent) {
-          const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-          const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-          const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
-          yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-          throw error
-        }
-
         const templateParts = yield* resolvePromptParts(template)
         const isSubtask = (agent.mode === "subagent" && cmd.subtask !== false) || cmd.subtask === true
         const parts = isSubtask
@@ -1693,7 +2162,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             ]
           : [...templateParts, ...(input.parts ?? [])]
 
-        const userAgent = isSubtask ? (input.agent ?? (yield* agents.defaultAgent())) : agentName
+        const userAgent = isSubtask ? fallbackAgent : agentName
         const userModel = isSubtask
           ? input.model
             ? Provider.parseModel(input.model)
@@ -1735,7 +2204,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }),
   )
 
-  const defaultLayer = Layer.unwrap(
+  const defaultLayer: Layer.Layer<Service, never, never> = Layer.unwrap(
     Effect.sync(() =>
       layer.pipe(
         Layer.provide(SessionStatus.layer),
@@ -1749,6 +2218,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         Layer.provide(ToolRegistry.defaultLayer),
         Layer.provide(Truncate.layer),
         Layer.provide(Provider.defaultLayer),
+        Layer.provide(Config.defaultLayer),
         Layer.provide(AppFileSystem.defaultLayer),
         Layer.provide(Plugin.defaultLayer),
         Layer.provide(Session.defaultLayer),

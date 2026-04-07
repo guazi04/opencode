@@ -1,26 +1,20 @@
 Use this tool to create and manage a structured task list for the current coding session.
-It helps track progress, organize complex work, and provide visibility to the user.
 
 ## When to Use This Tool
-Use this tool proactively when:
+Use when:
 
 1. A task has 3+ distinct steps.
 2. Work is non-trivial and needs planning.
 3. The user explicitly asks for a todo list.
 4. The user provides multiple tasks (numbered or comma-separated).
-5. New instructions arrive and need to be captured as actionable items.
-6. A task is completed and follow-up tasks need tracking.
-7. You start a task and need to mark one item as `in_progress`.
 
 ## When NOT to Use This Tool
-Skip this tool when:
+Skip when:
 
 1. There is one straightforward task.
-2. The task is trivial and tracking adds no value.
-3. The task can be finished in fewer than 3 trivial steps.
-4. The request is purely conversational or informational.
+2. The request is purely conversational or informational.
 
-If there is only one trivial task, do the task directly without creating todos.
+If there is only one trivial task, do it directly without creating todos.
 
 ## Task States and Management
 
@@ -41,5 +35,3 @@ If there is only one trivial task, do the task directly without creating todos.
    - Use specific, actionable task names.
    - Break complex work into smaller steps.
    - Keep task names clear and descriptive.
-
-When in doubt, use this tool to maintain execution quality and completeness.
