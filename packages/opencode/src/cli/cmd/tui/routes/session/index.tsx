@@ -80,6 +80,7 @@ import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
+import { isRecord } from "@/util/record"
 
 addDefaultParsers(parsers.parsers)
 
@@ -1408,6 +1409,207 @@ const PART_MAPPING = {
   reasoning: ReasoningPart,
 }
 
+type ContextData = {
+  model: string
+  agent: string
+  used: number
+  limit: number
+  reserved: number
+  free: number
+  categories: {
+    system: number
+    tools: number
+    skills: number
+    messages: number
+  }
+  cache: {
+    read: number
+    write: number
+    input: number
+  }
+  skills: {
+    name: string
+    tokens: number
+  }[]
+  mcpTools: string[]
+  agents: string[]
+  hasAssistant: boolean
+}
+
+const num = (input: unknown) => (typeof input === "number" && Number.isFinite(input) ? input : undefined)
+
+const txt = (input: unknown) => (typeof input === "string" ? input : undefined)
+
+const list = (input: unknown) =>
+  Array.isArray(input) ? input.filter((item): item is string => typeof item === "string") : []
+
+function contextData(input: unknown) {
+  if (!isRecord(input)) return
+  if (!isRecord(input.categories)) return
+  if (!isRecord(input.cache)) return
+  if (!Array.isArray(input.skills)) return
+  const model = txt(input.model)
+  const agent = txt(input.agent)
+  const used = num(input.used)
+  const limit = num(input.limit)
+  const reserved = num(input.reserved)
+  const free = num(input.free)
+  const system = num(input.categories.system)
+  const tools = num(input.categories.tools)
+  const skills = num(input.categories.skills)
+  const messages = num(input.categories.messages)
+  const read = num(input.cache.read)
+  const write = num(input.cache.write)
+  const cacheInput = num(input.cache.input)
+  if (
+    model === undefined ||
+    agent === undefined ||
+    used === undefined ||
+    limit === undefined ||
+    reserved === undefined ||
+    free === undefined ||
+    system === undefined ||
+    tools === undefined ||
+    skills === undefined ||
+    messages === undefined ||
+    read === undefined ||
+    write === undefined ||
+    cacheInput === undefined ||
+    typeof input.hasAssistant !== "boolean"
+  ) {
+    return
+  }
+  const skillList = input.skills.flatMap((item) => {
+    if (!isRecord(item)) return []
+    const name = txt(item.name)
+    const tokens = num(item.tokens)
+    if (name === undefined || tokens === undefined) return []
+    return [{ name, tokens }]
+  })
+  return {
+    model,
+    agent,
+    used,
+    limit,
+    reserved,
+    free,
+    categories: { system, tools, skills, messages },
+    cache: { read, write, input: cacheInput },
+    skills: skillList,
+    mcpTools: list(input.mcpTools),
+    agents: list(input.agents),
+    hasAssistant: input.hasAssistant,
+  } satisfies ContextData
+}
+
+function tokenText(input: number) {
+  if (input >= 1000) return `${Math.round(input / 100) / 10}k`
+  return `${input}`
+}
+
+function pctText(input: number, total: number) {
+  if (total <= 0) return "0.0%"
+  return `${((input / total) * 100).toFixed(1)}%`
+}
+
+function ContextVisualization(props: { data: ContextData }) {
+  const { theme } = useTheme()
+  const fill = props.data.used / Math.max(props.data.limit, 1) >= 0.7 ? "⛁" : "⛀"
+  const cols = props.data.limit >= 1_000_000 ? 20 : 10
+  const rows = 10
+  const items = createMemo(() => [
+    { name: "System prompt", value: props.data.categories.system, color: theme.success, char: fill },
+    { name: "System tools", value: props.data.categories.tools, color: theme.primary, char: fill },
+    { name: "Skills", value: props.data.categories.skills, color: theme.warning, char: fill },
+    { name: "Messages", value: props.data.categories.messages, color: theme.error, char: fill },
+    { name: "Free space", value: props.data.free, color: theme.textMuted, char: "⛶" },
+    { name: "Autocompact buffer", value: props.data.reserved, color: theme.textMuted, char: "⛝" },
+  ])
+  const cells = createMemo(() => {
+    const total = items().reduce((sum, item) => sum + item.value, 0)
+    if (total <= 0) return Array.from({ length: cols * rows }, () => items()[4])
+    return Array.from({ length: cols * rows }, (_, i) => {
+      const point = ((i + 0.5) * total) / (cols * rows)
+      let sum = 0
+      for (const item of items()) {
+        sum += item.value
+        if (point <= sum) return item
+      }
+      return items()[items().length - 1]
+    })
+  })
+  const lines = createMemo(() => Array.from({ length: rows }, (_, i) => cells().slice(i * cols, (i + 1) * cols)))
+  return (
+    <box flexDirection="column" gap={1}>
+      <text attributes={TextAttributes.BOLD} fg={theme.text}>
+        Context Usage
+      </text>
+      <box flexDirection="row" gap={2}>
+        <box flexDirection="column" flexShrink={0}>
+          <For each={lines()}>
+            {(line) => (
+              <box flexDirection="row">
+                <For each={line}>{(cell) => <text fg={cell.color}>{cell.char} </text>}</For>
+              </box>
+            )}
+          </For>
+        </box>
+        <box flexDirection="column" gap={1}>
+          <text attributes={TextAttributes.BOLD} fg={theme.text}>
+            {props.data.model}
+          </text>
+          <text fg={theme.textMuted}>
+            {tokenText(props.data.used)}/{tokenText(props.data.limit)} tokens (
+            {pctText(props.data.used, props.data.limit)})
+          </text>
+          <text fg={theme.textMuted}>
+            Cache {tokenText(props.data.cache.read)} read · {tokenText(props.data.cache.write)} write ·{" "}
+            {tokenText(props.data.cache.input)} input
+          </text>
+          <text fg={theme.textMuted}>Estimated usage by category</text>
+          <For each={items()}>
+            {(item) => (
+              <text fg={theme.text}>
+                <span style={{ fg: item.color }}>{item.char} </span>
+                {item.name}: {tokenText(item.value)} ({pctText(item.value, props.data.limit)})
+              </text>
+            )}
+          </For>
+        </box>
+      </box>
+      <box flexDirection="column" gap={1}>
+        <Show when={props.data.skills.length > 0}>
+          <box flexDirection="column">
+            <text attributes={TextAttributes.BOLD} fg={theme.text}>
+              Skills
+            </text>
+            <For each={props.data.skills}>
+              {(item) => (
+                <text fg={theme.textMuted}>
+                  <span style={{ fg: theme.warning }}>⛁ </span>
+                  {item.name} · {tokenText(item.tokens)}
+                </text>
+              )}
+            </For>
+          </box>
+        </Show>
+        <box flexDirection="column">
+          <text attributes={TextAttributes.BOLD} fg={theme.text}>
+            MCP Tools
+          </text>
+          <text fg={theme.textMuted}>{props.data.mcpTools.length ? props.data.mcpTools.join(", ") : "none"}</text>
+        </box>
+        <box flexDirection="column">
+          <text attributes={TextAttributes.BOLD} fg={theme.text}>
+            Agents
+          </text>
+          <text fg={theme.textMuted}>{props.data.agents.length ? props.data.agents.join(", ") : props.data.agent}</text>
+        </box>
+      </box>
+    </box>
+  )
+}
+
 function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: AssistantMessage }) {
   const { theme, subtleSyntax } = useTheme()
   const ctx = use()
@@ -1444,10 +1646,16 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  const data = createMemo(() => {
+    if (props.part.metadata?.command !== "context") return
+    if (props.part.metadata?.local !== true) return
+    return contextData(props.part.metadata.data)
+  })
   return (
     <Show when={props.part.text.trim()}>
       <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
         <Switch>
+          <Match when={data()}>{(item) => <ContextVisualization data={item()} />}</Match>
           <Match when={Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
             <markdown
               syntaxStyle={syntax()}

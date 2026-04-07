@@ -1,7 +1,16 @@
+import { Tiktoken } from "js-tiktoken/lite"
+import cl100k_base from "js-tiktoken/ranks/cl100k_base"
+
 export namespace Token {
-  const CHARS_PER_TOKEN = 4
+  let enc: Tiktoken | undefined
+
+  function encoder() {
+    if (!enc) enc = new Tiktoken(cl100k_base)
+    return enc
+  }
 
   export function estimate(input: string) {
-    return Math.max(0, Math.round((input || "").length / CHARS_PER_TOKEN))
+    if (!input) return 0
+    return encoder().encode(input).length
   }
 }

@@ -134,7 +134,7 @@ export namespace ToolRegistry {
           ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...(cfg.experimental?.batch_tool === true ? [BatchTool] : []),
           ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
-          ...custom,
+          ...custom.toSorted((a, b) => a.id.localeCompare(b.id)),
         ]
       })
 

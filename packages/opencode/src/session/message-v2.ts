@@ -731,7 +731,7 @@ export namespace MessageV2 {
           parts: [],
         }
         for (const part of msg.parts) {
-          if (part.type === "text")
+          if (part.type === "text" && !part.ignored)
             assistantMessage.parts.push({
               type: "text",
               text: part.text,
@@ -1011,7 +1011,7 @@ export namespace MessageV2 {
           },
           { cause: e },
         ).toObject()
-      case APICallError.isInstance(e):
+      case APICallError.isInstance(e): {
         const parsed = ProviderError.parseAPICallError({
           providerID: ctx.providerID,
           error: e,
@@ -1037,6 +1037,7 @@ export namespace MessageV2 {
           },
           { cause: e },
         ).toObject()
+      }
       case TypeValidationError.isInstance(e): {
         const body = (() => {
           if (typeof e.value === "string") return e.value

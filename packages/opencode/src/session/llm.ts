@@ -90,6 +90,19 @@ export namespace LLM {
 
   export const defaultLayer = layer
 
+  export function prompts(input: {
+    prompt?: string
+    provider: string[]
+    system: string[]
+    user?: string
+    isCodex: boolean
+  }) {
+    const custom = input.user && input.user !== input.prompt && !input.system.includes(input.user) ? [input.user] : []
+    const prefix = (input.prompt ? [input.prompt] : input.isCodex ? [] : input.provider).join("\n")
+    const rest = [...input.system, ...custom].flatMap((x) => (x ? [x] : [])).join("\n")
+    return [prefix, rest].flatMap((x) => (x ? [x] : []))
+  }
+
   export async function stream(input: StreamRequest) {
     const l = log
       .clone()
@@ -111,22 +124,13 @@ export namespace LLM {
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
 
-    const user = input.user.system
-    const custom = user && user !== input.agent.prompt && !input.system.includes(user) ? [user] : []
-    const system = []
-    system.push(
-      [
-        // use agent prompt otherwise provider prompt
-        // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
-        ...(input.agent.prompt ? [input.agent.prompt] : isCodex ? [] : SystemPrompt.provider(input.model)),
-        // any custom prompt passed into this call
-        ...input.system,
-        // any custom prompt from last user message
-        ...custom,
-      ]
-        .filter((x) => x)
-        .join("\n"),
-    )
+    const system = prompts({
+      prompt: input.agent.prompt,
+      provider: SystemPrompt.provider(input.model),
+      system: input.system,
+      user: input.user.system,
+      isCodex,
+    })
 
     const header = system[0]
     await Plugin.trigger(
