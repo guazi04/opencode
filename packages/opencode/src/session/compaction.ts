@@ -2,7 +2,6 @@ import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { Session } from "."
 import { SessionID, MessageID, PartID } from "./schema"
-import { Instance } from "../project/instance"
 import { Provider } from "../provider/provider"
 import { MessageV2 } from "./message-v2"
 import z from "zod"
@@ -34,6 +33,7 @@ export namespace SessionCompaction {
 
   export const PRUNE_MINIMUM = 20_000
   export const PRUNE_PROTECT = 40_000
+  const PRUNE_ESTIMATE_BYTES = 50_000
   const PRUNE_PROTECTED_TOOLS = ["skill"]
 
   export interface Interface {
@@ -96,6 +96,12 @@ export namespace SessionCompaction {
         return overflow({ cfg: yield* config.get(), tokens: input.tokens, model: input.model })
       })
 
+      function estimate(input: string) {
+        const bytes = Buffer.byteLength(input, "utf8")
+        if (bytes > PRUNE_ESTIMATE_BYTES) return Math.ceil(bytes / 3)
+        return Token.estimate(input)
+      }
+
       // goes backwards through parts until there are PRUNE_PROTECT tokens worth of tool
       // calls, then erases output of older tool calls to free context space
       const prune = Effect.fn("SessionCompaction.prune")(function* (input: { sessionID: SessionID }) {
@@ -124,10 +130,10 @@ export namespace SessionCompaction {
               if (part.state.status === "completed") {
                 if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
                 if (part.state.time.compacted) break loop
-                const estimate = Token.estimate(part.state.output)
-                total += estimate
+                const size = estimate(part.state.output)
+                total += size
                 if (total > PRUNE_PROTECT) {
-                  pruned += estimate
+                  pruned += size
                   toPrune.push(part)
                 }
               }
@@ -293,21 +299,20 @@ When constructing the summary, try to stick to this template:
 
         if (result === "continue" && input.auto) {
           if (replay) {
-            const original = replay.info
             const replayMsg = yield* session.updateMessage({
               id: MessageID.ascending(),
               role: "user",
               sessionID: input.sessionID,
               time: { created: Date.now() },
-              agent: original.agent,
-              model: original.model,
-              format: original.format,
-              tools: original.tools,
-              system: original.system,
-              system_context: original.system_context,
-              system_segments: original.system_segments,
-              tool_context: original.tool_context,
-              variant: original.variant,
+              agent: userMessage.agent,
+              model: userMessage.model,
+              format: userMessage.format,
+              tools: userMessage.tools,
+              system: userMessage.system,
+              system_context: userMessage.system_context,
+              system_segments: userMessage.system_segments,
+              tool_context: userMessage.tool_context,
+              variant: userMessage.variant,
             })
             for (const part of replay.parts) {
               if (part.type === "compaction") continue

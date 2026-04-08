@@ -75,7 +75,12 @@ export const WebCommand = cmd({
       open(displayUrl).catch(() => {})
     }
 
+    const shutdown = () => {
+      server.stop(true)
+      process.exit(0)
+    }
+    process.on("SIGINT", shutdown)
+    process.on("SIGTERM", shutdown)
     await new Promise(() => {})
-    await server.stop()
   },
 })

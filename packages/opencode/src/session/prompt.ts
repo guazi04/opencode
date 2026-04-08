@@ -1954,7 +1954,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 const format = user.format ?? { type: "text" as const }
                 if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
                 const context = system.join("\n")
-                const segments = [...system]
+                const segments = [agent.prompt, ...system].filter(Boolean) as string[]
                 const toolContext = toolSummary(tools)
                 if (
                   user.system_context !== context ||
