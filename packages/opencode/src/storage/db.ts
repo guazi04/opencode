@@ -11,7 +11,7 @@ import z from "zod"
 import path from "path"
 import { readFileSync, readdirSync, existsSync } from "fs"
 import { Flag } from "../flag/flag"
-import { CHANNEL } from "../installation/meta"
+import { Installation } from "../installation"
 import { InstanceState } from "@/effect/instance-state"
 import { iife } from "@/util/iife"
 import { init } from "#db"
@@ -29,9 +29,9 @@ const log = Log.create({ service: "db" })
 
 export namespace Database {
   export function getChannelPath() {
-    if (["latest", "beta"].includes(CHANNEL) || Flag.OPENCODE_DISABLE_CHANNEL_DB)
+    if (["latest", "beta"].includes(Installation.CHANNEL) || Flag.OPENCODE_DISABLE_CHANNEL_DB)
       return path.join(Global.Path.data, "opencode.db")
-    const safe = CHANNEL.replace(/[^a-zA-Z0-9._-]/g, "-")
+    const safe = Installation.CHANNEL.replace(/[^a-zA-Z0-9._-]/g, "-")
     return path.join(Global.Path.data, `opencode-${safe}.db`)
   }
 
@@ -67,17 +67,17 @@ export namespace Database {
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
 
-    const sql = dirs
-      .map((name) => {
-        const file = path.join(dir, name, "migration.sql")
-        if (!existsSync(file)) return
-        return {
+    const sql = dirs.flatMap((name) => {
+      const file = path.join(dir, name, "migration.sql")
+      if (!existsSync(file)) return []
+      return [
+        {
           sql: readFileSync(file, "utf-8"),
           timestamp: time(name),
           name,
-        }
-      })
-      .filter(Boolean) as Journal
+        },
+      ]
+    })
 
     return sql.sort((a, b) => a.timestamp - b.timestamp)
   }

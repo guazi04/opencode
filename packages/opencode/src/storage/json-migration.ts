@@ -79,7 +79,10 @@ export namespace JsonMigration {
       }
 
       if (typeof sqlite.prepare === "function") {
-        const mod = await import("drizzle-orm/node-sqlite")
+        // Use computed module path to prevent Bun's bundler from resolving
+        // drizzle-orm/node-sqlite (which depends on node:sqlite, unavailable in Bun --compile)
+        const modPath = "drizzle-orm" + "/node-sqlite"
+        const mod = await import(modPath)
         return mod.drizzle({ client: sqlite as never }) as unknown as Drizzle
       }
 

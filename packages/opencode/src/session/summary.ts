@@ -128,8 +128,12 @@ export namespace SessionSummary {
         const target = messages.find((m) => m.info.id === input.messageID)
         if (!target || target.info.role !== "user") return
         const msgDiffs = yield* computeDiff({ messages })
-        target.info.summary = { ...target.info.summary, diffs: msgDiffs }
-        yield* sessions.updateMessage(target.info)
+        const fresh = yield* Effect.promise(() =>
+          MessageV2.get({ sessionID: input.sessionID, messageID: input.messageID }),
+        )
+        if (fresh.info.role !== "user") return
+        fresh.info.summary = { ...fresh.info.summary, diffs: msgDiffs }
+        yield* sessions.updateMessage(fresh.info)
       })
 
       const diff = Effect.fn("SessionSummary.diff")(function* (input: { sessionID: SessionID; messageID?: MessageID }) {

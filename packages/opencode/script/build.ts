@@ -206,7 +206,7 @@ for (const item of targets) {
   const workerRelativePath = path.relative(dir, parserWorker).replaceAll("\\", "/")
 
   await Bun.build({
-    conditions: ["browser"],
+    conditions: ["browser", "bun"],
     tsconfig: "./tsconfig.json",
     plugins: [plugin],
     compile: {
