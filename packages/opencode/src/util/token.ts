@@ -1,11 +1,10 @@
-import { Tiktoken } from "js-tiktoken/lite"
-import cl100k_base from "js-tiktoken/ranks/cl100k_base"
+import { get_encoding } from "@dqbd/tiktoken"
 
 export namespace Token {
-  let enc: Tiktoken | undefined
+  let enc: ReturnType<typeof get_encoding> | undefined
 
   function encoder() {
-    if (!enc) enc = new Tiktoken(cl100k_base)
+    if (!enc) enc = get_encoding("cl100k_base")
     return enc
   }
 
