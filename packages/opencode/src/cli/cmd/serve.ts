@@ -18,7 +18,12 @@ export const ServeCommand = cmd({
     const server = Server.listen(opts)
     console.log(`opencode server listening on http://${server.hostname}:${server.port}`)
 
+    const shutdown = () => {
+      server.stop(true)
+      process.exit(0)
+    }
+    process.on("SIGINT", shutdown)
+    process.on("SIGTERM", shutdown)
     await new Promise(() => {})
-    await server.stop()
   },
 })
