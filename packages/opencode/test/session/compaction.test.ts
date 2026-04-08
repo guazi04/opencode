@@ -226,6 +226,25 @@ function wait(ms = 50) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+async function close(rt: { dispose: () => Promise<void> }, ms = 1000) {
+  await Promise.race([
+    rt.dispose(),
+    wait(ms).then(() => {
+      throw new Error(`timed out disposing runtime after ${ms}ms`)
+    }),
+  ])
+}
+
+async function join<T>(run?: Promise<T>, ms = 1000) {
+  if (!run) return
+  await Promise.race([
+    run.catch(() => undefined),
+    wait(ms).then(() => {
+      throw new Error(`timed out waiting for run after ${ms}ms`)
+    }),
+  ])
+}
+
 function defer() {
   let resolve!: () => void
   const promise = new Promise<void>((done) => {
@@ -845,8 +864,8 @@ describe("session.compaction.process", () => {
         } finally {
           off?.()
           abort.abort()
-          await rt.dispose()
-          await run?.catch(() => undefined)
+          await close(rt)
+          await join(run)
         }
       },
     })
@@ -900,8 +919,8 @@ describe("session.compaction.process", () => {
           expect(all.some((msg) => msg.info.role === "assistant" && msg.info.summary)).toBe(false)
         } finally {
           abort.abort()
-          await rt.dispose()
-          await run?.catch(() => undefined)
+          await close(rt)
+          await join(run)
         }
       },
     })
